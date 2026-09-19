@@ -1,0 +1,228 @@
+Pager usage is off.
+################ ЧАСТЬ 10. Автоматическое создание партиций ################
+--- регистрируем lab3.events: партиции по дням, горизонт 3 дня вперёд ---
+INSERT 0 1
+--- что есть сейчас ---
+  partition_name   
+-------------------
+ events_2026_09_09
+ events_2026_09_10
+ events_2026_09_11
+ events_2026_09_13
+ events_2026_09_14
+ events_2026_09_15
+(6 rows)
+
+--- что требуется (сегодня + 3 дня) ---
+ period_start |      needed       
+--------------+-------------------
+ 2026-09-13   | events_2026_09_13
+ 2026-09-14   | events_2026_09_14
+ 2026-09-15   | events_2026_09_15
+ 2026-09-16   | events_2026_09_16
+(4 rows)
+
+
+=== ЗАПУСК 1: CreatePartitionsJob ===
+                          log_line                           
+-------------------------------------------------------------
+ 2026-09-13 14:33  Partition job started. Table: lab3.events
+ Existing partitions: 6
+ Required partitions: 4 (horizon 3 day)
+ Creating: events_2026_09_16  [2026-09-16 .. 2026-09-17)
+ Missing partitions: 1
+ Partition created successfully.
+ Partition job finished.
+ 
+(8 rows)
+
+=== ЗАПУСК 2: повторный — job идемпотентна, ничего не создаёт ===
+                          log_line                           
+-------------------------------------------------------------
+ 2026-09-13 14:33  Partition job started. Table: lab3.events
+ Existing partitions: 7
+ Required partitions: 4 (horizon 3 day)
+ Missing partitions: 0
+ Nothing to create — all required partitions already exist.
+ Partition job finished.
+ 
+(7 rows)
+
+--- партиции после работы job ---
+  partition_name   
+-------------------
+ events_2026_09_09
+ events_2026_09_10
+ events_2026_09_11
+ events_2026_09_13
+ events_2026_09_14
+ events_2026_09_15
+ events_2026_09_16
+(7 rows)
+
+--- журнал запусков ---
+ id |       started       | existing_count | required_count | missing_count |    created_list     | status  
+----+---------------------+----------------+----------------+---------------+---------------------+---------
+  1 | 2026-09-13 14:33:42 |              6 |              4 |             1 | {events_2026_09_16} | SUCCESS
+  2 | 2026-09-13 14:33:42 |              7 |              4 |             0 | {}                  | SUCCESS
+(2 rows)
+
+
+--- проверка: вставка «в завтра» теперь проходит ---
+INSERT 0 1
+   id    |     created_at      |       landed_in        
+---------+---------------------+------------------------
+ 9100001 | 2026-09-14 12:00:00 | lab3.events_2026_09_14
+(1 row)
+
+
+################ ЧАСТЬ 11. Сбой ночной job и alerting ################
+=== ШАГ 1. Исходное состояние: всё хорошо ===
+ table_full_name | check_status | missing | notified 
+-----------------+--------------+---------+----------
+ lab3.events     | OK           | {}      | f
+(1 row)
+
+--- состояние и очередь уведомлений ---
+ config_id | status | missing_list | check_count 
+-----------+--------+--------------+-------------
+         1 | OK     | {}           |           1
+(1 row)
+
+ id | severity | subject 
+----+----------+---------
+(0 rows)
+
+
+=== ШАГ 2. Искусственно ломаем: удаляем последнюю партицию горизонта ===
+psql:/tmp/b02.sql:61: NOTICE:  Удалена партиция lab3.events_2026_09_16
+DO
+
+=== ШАГ 3. PartitionHealthCheck обнаруживает проблему ===
+ table_full_name | check_status |       missing       | notified 
+-----------------+--------------+---------------------+----------
+ lab3.events     | CRITICAL     | {events_2026_09_16} | t
+(1 row)
+
+--- в outbox появился CRITICAL ---
+ id | severity |                 subject                 | created  
+----+----------+-----------------------------------------+----------
+  1 | CRITICAL | [CRITICAL] Partition alert: lab3.events | 14:33:42
+(1 row)
+
+--- текст уведомления ---
+          body           
+-------------------------
+ 🔴 Partition alert     +
+                        +
+ Table: lab3.events     +
+                        +
+ Missing partitions:    +
+ events_2026_09_16      +
+                        +
+ Expected horizon: 3 day+
+                        +
+ Checked at:            +
+ 2026-09-13 14:33:42
+(1 row)
+
+
+=== ШАГ 4. Дедупликация: повторные проверки НЕ создают новых алертов ===
+ table_full_name | check_status |       missing       | notified 
+-----------------+--------------+---------------------+----------
+ lab3.events     | CRITICAL     | {events_2026_09_16} | f
+(1 row)
+
+ table_full_name | check_status |       missing       | notified 
+-----------------+--------------+---------------------+----------
+ lab3.events     | CRITICAL     | {events_2026_09_16} | f
+(1 row)
+
+ table_full_name | check_status |       missing       | notified 
+-----------------+--------------+---------------------+----------
+ lab3.events     | CRITICAL     | {events_2026_09_16} | f
+(1 row)
+
+--- в outbox по-прежнему один CRITICAL, но check_count вырос ---
+ alerts_in_outbox 
+------------------
+                1
+(1 row)
+
+ config_id |  status  | check_count | changed_at | last_checked 
+-----------+----------+-------------+------------+--------------
+         1 | CRITICAL |           5 | 14:33:42   | 14:33:42
+(1 row)
+
+
+=== ШАГ 5. Восстановление: job создаёт недостающую партицию ===
+                          log_line                           
+-------------------------------------------------------------
+ 2026-09-13 14:33  Partition job started. Table: lab3.events
+ Existing partitions: 6
+ Required partitions: 4 (horizon 3 day)
+ Creating: events_2026_09_16  [2026-09-16 .. 2026-09-17)
+ Missing partitions: 1
+ Partition created successfully.
+ Partition job finished.
+ 
+(8 rows)
+
+=== ШАГ 6. Повторная проверка → OK + recovery-уведомление ===
+ table_full_name | check_status | missing | notified 
+-----------------+--------------+---------+----------
+ lab3.events     | OK           | {}      | t
+(1 row)
+
+ id | severity |                  subject                   | created  
+----+----------+--------------------------------------------+----------
+  1 | CRITICAL | [CRITICAL] Partition alert: lab3.events    | 14:33:42
+  2 | RECOVERY | [RECOVERY] Partition check OK: lab3.events | 14:33:42
+(2 rows)
+
+--- текст recovery ---
+              body              
+--------------------------------
+ 🟢 Partition check OK         +
+                               +
+ Table: lab3.events            +
+                               +
+ All required partitions exist.+
+                               +
+ Expected horizon: 3 day       +
+                               +
+ Checked at:                   +
+ 2026-09-13 14:33:42
+(1 row)
+
+
+=== ШАГ 7. Повторная проверка после восстановления — снова тишина ===
+ table_full_name | check_status | missing | notified 
+-----------------+--------------+---------+----------
+ lab3.events     | OK           | {}      | f
+(1 row)
+
+ alerts_total 
+--------------
+            2
+(1 row)
+
+
+################ Расписание pg_cron ################
+--- ночное создание партиций в 01:00 и проверка каждые 5 минут ---
+ schedule 
+----------
+        1
+(1 row)
+
+ schedule 
+----------
+        2
+(1 row)
+
+ jobid |  schedule   |                      command                      | active 
+-------+-------------+---------------------------------------------------+--------
+     1 | 0 1 * * *   | SELECT partition_mgmt.create_missing_partitions() | t
+     2 | */5 * * * * | SELECT partition_mgmt.health_check()              | t
+(2 rows)
+

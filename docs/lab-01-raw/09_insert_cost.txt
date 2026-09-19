@@ -1,0 +1,63 @@
+Pager usage is off.
+Timing is on.
+################ ЗАДАНИЕ 19. Влияние индексов на INSERT ################
+DROP TABLE
+Time: 1.680 ms
+psql:/tmp/lab01/09_insert_cost.sql:5: NOTICE:  table "orders_no_idx" does not exist, skipping
+DROP TABLE
+Time: 0.557 ms
+
+=== A. Таблица БЕЗ дополнительных индексов (только PK) ===
+psql:/tmp/lab01/09_insert_cost.sql:6: NOTICE:  table "orders_with_idx" does not exist, skipping
+CREATE TABLE
+Time: 27.086 ms
+--- INSERT 300 000 строк в таблицу БЕЗ индексов ---
+INSERT 0 300000
+Time: 2315.353 ms (00:02.315)
+
+=== B. Таблица С 6 дополнительными индексами ===
+CREATE TABLE
+Time: 8.612 ms
+CREATE INDEX
+Time: 6.672 ms
+CREATE INDEX
+Time: 7.230 ms
+CREATE INDEX
+Time: 9.219 ms
+CREATE INDEX
+Time: 7.110 ms
+CREATE INDEX
+Time: 7.527 ms
+CREATE INDEX
+Time: 6.565 ms
+--- INSERT 300 000 строк в таблицу С 6 индексами ---
+INSERT 0 300000
+Time: 10529.361 ms (00:10.529)
+
+=== C. UPDATE 50 000 строк (колонка НЕ входит ни в один индекс) ===
+UPDATE 50000
+Time: 562.510 ms
+UPDATE 50000
+Time: 2283.615 ms (00:02.284)
+
+=== D. UPDATE 50 000 строк (колонка ВХОДИТ в индексы) ===
+UPDATE 50001
+Time: 511.297 ms
+UPDATE 50001
+Time: 2008.489 ms (00:02.008)
+
+=== E. DELETE 50 000 строк ===
+DELETE 50001
+Time: 184.482 ms
+DELETE 50001
+Time: 34.563 ms
+Timing is off.
+
+=== Размеры: данные vs индексы ===
+      table      | heap  | indexes | total  | индексы, % от данных 
+-----------------+-------+---------+--------+----------------------
+ orders          | 85 MB | 247 MB  | 332 MB |                291.9
+ orders_no_idx   | 34 MB | 8808 kB | 42 MB  |                 25.6
+ orders_with_idx | 34 MB | 66 MB   | 99 MB  |                194.9
+(3 rows)
+

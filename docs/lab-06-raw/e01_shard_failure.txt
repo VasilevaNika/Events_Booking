@@ -1,0 +1,67 @@
+=== подготовка ===
+пользователь на shard-0: 1, бронирование 17385
+пользователь на shard-2: 6, бронирование 54449
+на shard-2: 11150 пользователей, 1114852 бронирований (22.3 % данных)
+
+=== до отказа: все 4 шарда работают ===
+           endpoint                                     HTTP      мс  подробности
+  шарды    GET  бронирования пользователя с shard-0      200    66.4  X-Shard: shard-0 
+  шарды    GET  бронирования пользователя с shard-2      200    36.0  X-Shard: shard-2 
+  шарды    GET  статистика пользователя с shard-2        200    27.7  X-Shard: shard-2 
+  шарды    GET  бронь по id, лежит на shard-0            200    17.9  X-Shard: shard-0 
+  шарды    GET  бронь по id, лежит на shard-2            200    54.9  X-Shard: shard-2 
+  шарды    GET  несуществующая бронь по id               404    15.6  Booking not found
+  шарды    GET  COUNT(*) по всем шардам                  200  1456.7  partial=false, total=5000005
+  шарды         то же, allow_partial=true                200   170.6  partial=false, total=5000005
+  шарды    GET  выручка по мероприятиям                  200  2559.5  partial=false
+  шарды         то же, allow_partial=true                200   682.1  partial=false
+  шарды    GET  последние бронирования                   200    18.3  partial=false
+  шарды    GET  обзор шардов                             200  1483.1  
+  primary  GET  каталог мероприятий                      200   166.5  
+  primary  GET  пользователь                             200    13.9  
+  primary  GET  бронирования (основное API)              200    36.7  
+  primary  GET  /health                                  200     5.9  
+
+>>> docker stop booking_shard_2
+
+=== shard-2 недоступен ===
+           endpoint                                     HTTP      мс  подробности
+  шарды    GET  бронирования пользователя с shard-0      200    29.9  X-Shard: shard-0 
+  шарды    GET  бронирования пользователя с shard-2      503   496.1  данные временно недоступны: shard-2 не отвечает
+  шарды    GET  статистика пользователя с shard-2        503    16.3  данные временно недоступны: shard-2 не отвечает
+  шарды    POST бронирование пользователю с shard-2      503    30.7  данные временно недоступны: shard-2 не отвечает
+  шарды    GET  бронь по id, лежит на shard-0            200    14.2  X-Shard: shard-0 
+  шарды    GET  бронь по id, лежит на shard-2            503    15.6  недоступны: shard-2
+  шарды    GET  несуществующая бронь по id               503    15.5  недоступны: shard-2
+  шарды    GET  COUNT(*) по всем шардам                  503   203.1  недоступны: shard-2
+  шарды         то же, allow_partial=true                200    99.7  partial=true, total=3885153, без: shard-2
+  шарды    GET  выручка по мероприятиям                  503   423.5  недоступны: shard-2
+  шарды         то же, allow_partial=true                200   500.0  partial=true, без: shard-2
+  шарды    GET  последние бронирования                   503    23.6  недоступны: shard-2
+  шарды    GET  обзор шардов                             200   716.6  
+  primary  GET  каталог мероприятий                      200    60.5  
+  primary  GET  пользователь                             200    13.5  
+  primary  GET  бронирования (основное API)              200    14.5  
+  primary  GET  /health                                  200    10.9  
+
+>>> docker start booking_shard_2
+shard-2: healthy
+
+=== после восстановления shard-2 ===
+           endpoint                                     HTTP      мс  подробности
+  шарды    GET  бронирования пользователя с shard-0      200   172.5  X-Shard: shard-0 
+  шарды    GET  бронирования пользователя с shard-2      200    93.1  X-Shard: shard-2 
+  шарды    GET  статистика пользователя с shard-2        200    53.4  X-Shard: shard-2 
+  шарды    GET  бронь по id, лежит на shard-0            200    23.1  X-Shard: shard-0 
+  шарды    GET  бронь по id, лежит на shard-2            200    21.0  X-Shard: shard-2 
+  шарды    GET  несуществующая бронь по id               404    21.0  Booking not found
+  шарды    GET  COUNT(*) по всем шардам                  200   826.0  partial=false, total=5000005
+  шарды         то же, allow_partial=true                200   150.7  partial=false, total=5000005
+  шарды    GET  выручка по мероприятиям                  200   592.6  partial=false
+  шарды         то же, allow_partial=true                200   547.0  partial=false
+  шарды    GET  последние бронирования                   200    19.0  partial=false
+  шарды    GET  обзор шардов                             200   960.6  
+  primary  GET  каталог мероприятий                      200    50.8  
+  primary  GET  пользователь                             200    11.9  
+  primary  GET  бронирования (основное API)              200    15.5  
+  primary  GET  /health                                  200     8.3  

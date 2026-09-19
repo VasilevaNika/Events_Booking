@@ -1,0 +1,17 @@
+Subject: [RECOVERY] Partition check OK: lab3.events
+From: partitions@booking.local
+To: dba@booking.local
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+MIME-Version: 1.0
+
+🟢 Partition check OK
+
+Table: lab3.events
+
+All required partitions exist.
+
+Expected horizon: 3 day
+
+Checked at:
+2026-09-13 15:02:42

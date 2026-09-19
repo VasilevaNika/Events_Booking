@@ -1,0 +1,14 @@
+# PostgreSQL 16 + pg_cron
+#
+# pg_cron не входит в официальный образ postgres:16, поэтому образ собирается свой.
+# Расширение планирует SQL-задания прямо внутри СУБД — в лабораторной №3 оно
+# запускает ночное создание партиций и проверку их наличия.
+#
+# Помимо установки пакета нужны два параметра сервера (заданы в docker-compose.yml):
+#   shared_preload_libraries=pg_cron   — библиотека грузится при старте
+#   cron.database_name=booking_db      — в какой БД живёт таблица расписания
+FROM postgres:16
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-16-cron \
+ && rm -rf /var/lib/apt/lists/*

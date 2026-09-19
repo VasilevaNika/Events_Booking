@@ -1,0 +1,99 @@
+Pager usage is off.
+################ ЗАДАНИЕ 14/15 (дополнение). Почему Sort не исчез для user_id = 123 ################
+--- Тот же запрос, но bitmap scan запрещён => чистый Index Scan по (user_id, created_at DESC) ---
+SET
+                                                                QUERY PLAN                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_orders_user_created_at_desc on orders  (cost=0.42..48.62 rows=11 width=53) (actual time=0.084..0.170 rows=6 loops=1)
+   Index Cond: (user_id = 123)
+   Buffers: shared hit=12
+ Planning:
+   Buffers: shared hit=265
+ Planning Time: 2.491 ms
+ Execution Time: 0.324 ms
+(7 rows)
+
+                                                                   QUERY PLAN                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..48.62 rows=11 width=53) (actual time=0.029..0.047 rows=6 loops=1)
+   Buffers: shared hit=9
+   ->  Index Scan using idx_orders_user_created_at_desc on orders  (cost=0.42..48.62 rows=11 width=53) (actual time=0.027..0.044 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=9
+ Planning Time: 0.248 ms
+ Execution Time: 0.123 ms
+(7 rows)
+
+--- А теперь запрещён ещё и индекс (user_id, created_at DESC): виден Sort ---
+SET
+BEGIN
+DROP INDEX
+DROP INDEX
+DROP INDEX
+DROP INDEX
+SET
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=48.81..48.83 rows=11 width=53) (actual time=0.207..0.210 rows=6 loops=1)
+   Buffers: shared hit=12
+   ->  Sort  (cost=48.81..48.83 rows=11 width=53) (actual time=0.204..0.206 rows=6 loops=1)
+         Sort Key: created_at DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=12
+         ->  Index Scan using idx_orders_user_id on orders  (cost=0.42..48.62 rows=11 width=53) (actual time=0.042..0.060 rows=6 loops=1)
+               Index Cond: (user_id = 123)
+               Buffers: shared hit=9
+ Planning:
+   Buffers: shared hit=7
+ Planning Time: 0.407 ms
+ Execution Time: 0.258 ms
+(13 rows)
+
+ROLLBACK
+SET
+
+--- Пагинация «тяжёлого» пользователя (27 заказов) ---
+--- ДО (без составного индекса) ---
+BEGIN
+DROP INDEX
+DROP INDEX
+DROP INDEX
+DROP INDEX
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=47.79..47.81 rows=11 width=53) (actual time=0.514..0.519 rows=20 loops=1)
+   Buffers: shared hit=28 read=2
+   ->  Sort  (cost=47.79..47.81 rows=11 width=53) (actual time=0.512..0.514 rows=20 loops=1)
+         Sort Key: created_at DESC
+         Sort Method: quicksort  Memory: 28kB
+         Buffers: shared hit=28 read=2
+         ->  Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.293..0.493 rows=27 loops=1)
+               Recheck Cond: (user_id = 86264)
+               Heap Blocks: exact=27
+               Buffers: shared hit=28 read=2
+               ->  Bitmap Index Scan on idx_orders_user_status  (cost=0.00..4.51 rows=11 width=0) (actual time=0.264..0.264 rows=27 loops=1)
+                     Index Cond: (user_id = 86264)
+                     Buffers: shared hit=1 read=2
+ Planning:
+   Buffers: shared hit=7
+ Planning Time: 0.259 ms
+ Execution Time: 0.566 ms
+(17 rows)
+
+ROLLBACK
+--- ПОСЛЕ (составной индекс есть) ---
+SET
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..48.62 rows=11 width=53) (actual time=0.115..0.148 rows=20 loops=1)
+   Buffers: shared hit=21 read=2
+   ->  Index Scan using idx_orders_user_created_at_desc on orders  (cost=0.42..48.62 rows=11 width=53) (actual time=0.114..0.144 rows=20 loops=1)
+         Index Cond: (user_id = 86264)
+         Buffers: shared hit=21 read=2
+ Planning:
+   Buffers: shared hit=73
+ Planning Time: 0.507 ms
+ Execution Time: 0.167 ms
+(9 rows)
+
+SET

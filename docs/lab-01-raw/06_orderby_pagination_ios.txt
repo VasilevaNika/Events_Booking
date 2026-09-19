@@ -1,0 +1,260 @@
+Pager usage is off.
+################ Справка: сколько заказов у user_id = 123 и вообще на пользователя ################
+ orders_of_user_123 
+--------------------
+                  6
+(1 row)
+
+ avg_orders_per_user | max_orders_per_user 
+---------------------+---------------------
+               10.00 |                  27
+(1 row)
+
+
+################ ЗАДАНИЕ 14. WHERE + ORDER BY — состояние ДО (составных индексов нет) ################
+BEGIN
+DROP INDEX
+DROP INDEX
+DROP INDEX
+--- ДО: user_id = 123 ORDER BY created_at DESC ---
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=47.79..47.81 rows=11 width=53) (actual time=0.226..0.228 rows=6 loops=1)
+   Sort Key: created_at DESC
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=12
+   ->  Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.069..0.152 rows=6 loops=1)
+         Recheck Cond: (user_id = 123)
+         Heap Blocks: exact=6
+         Buffers: shared hit=9
+         ->  Bitmap Index Scan on idx_orders_user_id  (cost=0.00..4.51 rows=11 width=0) (actual time=0.034..0.034 rows=6 loops=1)
+               Index Cond: (user_id = 123)
+               Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=26
+ Planning Time: 0.371 ms
+ Execution Time: 0.307 ms
+(15 rows)
+
+--- ДО (нагляднее): 5000 пользователей, ORDER BY created_at DESC LIMIT 20 ---
+                                                                      QUERY PLAN                                                                       
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..29.94 rows=20 width=53) (actual time=0.381..2.716 rows=20 loops=1)
+   Buffers: shared hit=332
+   ->  Index Scan Backward using idx_orders_created_at on orders  (cost=0.42..74288.19 rows=50346 width=53) (actual time=0.378..2.708 rows=20 loops=1)
+         Filter: ((user_id >= 1) AND (user_id <= 5000))
+         Rows Removed by Filter: 307
+         Buffers: shared hit=332
+ Planning:
+   Buffers: shared hit=10
+ Planning Time: 0.267 ms
+ Execution Time: 2.759 ms
+(10 rows)
+
+--- ДО: пагинация user_id = 123 ORDER BY created_at DESC LIMIT 20 (ЗАДАНИЕ 15) ---
+                                                               QUERY PLAN                                                               
+----------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=47.79..47.81 rows=11 width=53) (actual time=0.075..0.077 rows=6 loops=1)
+   Buffers: shared hit=9
+   ->  Sort  (cost=47.79..47.81 rows=11 width=53) (actual time=0.073..0.074 rows=6 loops=1)
+         Sort Key: created_at DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=9
+         ->  Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.047..0.062 rows=6 loops=1)
+               Recheck Cond: (user_id = 123)
+               Heap Blocks: exact=6
+               Buffers: shared hit=9
+               ->  Bitmap Index Scan on idx_orders_user_id  (cost=0.00..4.51 rows=11 width=0) (actual time=0.037..0.038 rows=6 loops=1)
+                     Index Cond: (user_id = 123)
+                     Buffers: shared hit=3
+ Planning Time: 0.150 ms
+ Execution Time: 0.140 ms
+(15 rows)
+
+ROLLBACK
+
+################ ЗАДАНИЕ 14. Создаём индекс (user_id, created_at DESC) ################
+CREATE INDEX
+ANALYZE
+ size  
+-------
+ 30 MB
+(1 row)
+
+--- ПОСЛЕ: user_id = 123 ORDER BY created_at DESC ---
+                                                                  QUERY PLAN                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=47.79..47.81 rows=11 width=53) (actual time=0.209..0.210 rows=6 loops=1)
+   Sort Key: created_at DESC
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=6 read=3
+   ->  Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.184..0.198 rows=6 loops=1)
+         Recheck Cond: (user_id = 123)
+         Heap Blocks: exact=6
+         Buffers: shared hit=6 read=3
+         ->  Bitmap Index Scan on idx_orders_user_created_at_desc  (cost=0.00..4.51 rows=11 width=0) (actual time=0.175..0.175 rows=6 loops=1)
+               Index Cond: (user_id = 123)
+               Buffers: shared read=3
+ Planning:
+   Buffers: shared hit=26 read=1
+ Planning Time: 0.510 ms
+ Execution Time: 0.252 ms
+(15 rows)
+
+--- ПОСЛЕ (нагляднее): 5000 пользователей, ORDER BY created_at DESC LIMIT 20 ---
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..28.03 rows=20 width=53) (actual time=0.045..0.095 rows=20 loops=1)
+   Buffers: shared hit=24 read=1
+   ->  Index Scan Backward using idx_orders_created_at_user on orders  (cost=0.42..69201.47 rows=50140 width=53) (actual time=0.043..0.091 rows=20 loops=1)
+         Index Cond: ((user_id >= 1) AND (user_id <= 5000))
+         Buffers: shared hit=24 read=1
+ Planning:
+   Buffers: shared hit=3 read=1
+ Planning Time: 0.347 ms
+ Execution Time: 0.123 ms
+(9 rows)
+
+
+################ ЗАДАНИЕ 15. Pagination Query — ПОСЛЕ индекса ################
+                                                                     QUERY PLAN                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=47.79..47.81 rows=11 width=53) (actual time=0.069..0.072 rows=6 loops=1)
+   Buffers: shared hit=9
+   ->  Sort  (cost=47.79..47.81 rows=11 width=53) (actual time=0.067..0.069 rows=6 loops=1)
+         Sort Key: created_at DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=9
+         ->  Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.040..0.056 rows=6 loops=1)
+               Recheck Cond: (user_id = 123)
+               Heap Blocks: exact=6
+               Buffers: shared hit=9
+               ->  Bitmap Index Scan on idx_orders_user_created_at_desc  (cost=0.00..4.51 rows=11 width=0) (actual time=0.029..0.030 rows=6 loops=1)
+                     Index Cond: (user_id = 123)
+                     Buffers: shared hit=3
+ Planning Time: 0.199 ms
+ Execution Time: 0.112 ms
+(15 rows)
+
+                                                                     QUERY PLAN                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=47.79..47.81 rows=11 width=53) (actual time=0.063..0.066 rows=6 loops=1)
+   Buffers: shared hit=9
+   ->  Sort  (cost=47.79..47.81 rows=11 width=53) (actual time=0.061..0.062 rows=6 loops=1)
+         Sort Key: created_at DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=9
+         ->  Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.036..0.050 rows=6 loops=1)
+               Recheck Cond: (user_id = 123)
+               Heap Blocks: exact=6
+               Buffers: shared hit=9
+               ->  Bitmap Index Scan on idx_orders_user_created_at_desc  (cost=0.00..4.51 rows=11 width=0) (actual time=0.025..0.026 rows=6 loops=1)
+                     Index Cond: (user_id = 123)
+                     Buffers: shared hit=3
+ Planning Time: 0.193 ms
+ Execution Time: 0.104 ms
+(15 rows)
+
+
+################ ЗАДАНИЕ 16. Index Only Scan ################
+--- SELECT id, user_id WHERE user_id = 123 (есть idx_orders_user_id) ---
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=16) (actual time=0.042..0.058 rows=6 loops=1)
+   Recheck Cond: (user_id = 123)
+   Heap Blocks: exact=6
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on idx_orders_user_created_at_desc  (cost=0.00..4.51 rows=11 width=0) (actual time=0.029..0.029 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=3
+ Planning Time: 0.153 ms
+ Execution Time: 0.095 ms
+(9 rows)
+
+--- SELECT user_id (только ключ индекса) ---
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using idx_orders_user_created_at_desc on orders  (cost=0.42..4.62 rows=11 width=8) (actual time=0.027..0.030 rows=6 loops=1)
+   Index Cond: (user_id = 123)
+   Heap Fetches: 0
+   Buffers: shared hit=4
+ Planning Time: 0.154 ms
+ Execution Time: 0.060 ms
+(6 rows)
+
+--- Проверка карты видимости ---
+ relname | relpages | reltuples | relallvisible 
+---------+----------+-----------+---------------
+ orders  |    10827 |   1000000 |         10827
+(1 row)
+
+--- VACUUM ANALYZE и повтор ---
+VACUUM
+ relname | relpages | reltuples | relallvisible 
+---------+----------+-----------+---------------
+ orders  |    10827 |   1000000 |         10827
+(1 row)
+
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=16) (actual time=0.026..0.041 rows=6 loops=1)
+   Recheck Cond: (user_id = 123)
+   Heap Blocks: exact=6
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on idx_orders_user_created_at_desc  (cost=0.00..4.51 rows=11 width=0) (actual time=0.015..0.015 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=9
+ Planning Time: 0.178 ms
+ Execution Time: 0.068 ms
+(11 rows)
+
+
+################ ЗАДАНИЕ 16 (доп). Покрывающий индекс INCLUDE ################
+CREATE INDEX
+VACUUM
+ include_index_size | plain_index_size 
+--------------------+------------------
+ 52 MB              | 9088 kB
+(1 row)
+
+--- SELECT id, status, created_at WHERE user_id = 123 ---
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using idx_orders_user_id_include on orders  (cost=0.42..4.62 rows=11 width=23) (actual time=0.054..0.056 rows=6 loops=1)
+   Index Cond: (user_id = 123)
+   Heap Fetches: 0
+   Buffers: shared hit=1 read=3
+ Planning:
+   Buffers: shared hit=17
+ Planning Time: 0.167 ms
+ Execution Time: 0.070 ms
+(8 rows)
+
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using idx_orders_user_id_include on orders  (cost=0.42..4.62 rows=11 width=23) (actual time=0.033..0.037 rows=6 loops=1)
+   Index Cond: (user_id = 123)
+   Heap Fetches: 0
+   Buffers: shared hit=4
+ Planning Time: 0.148 ms
+ Execution Time: 0.091 ms
+(6 rows)
+
+--- Контрпример: добавили amount, которого нет в индексе ---
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=29) (actual time=0.023..0.037 rows=6 loops=1)
+   Recheck Cond: (user_id = 123)
+   Heap Blocks: exact=6
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on idx_orders_user_id_include  (cost=0.00..4.51 rows=11 width=0) (actual time=0.014..0.014 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=3
+ Planning Time: 0.155 ms
+ Execution Time: 0.065 ms
+(11 rows)
+

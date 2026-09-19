@@ -1,0 +1,405 @@
+Pager usage is off.
+################ ЗАДАНИЕ 22/25. Текущая схема и индексы сервиса ################
+     таблица      | строк (оценка) |   данные   | индексы |  всего  
+------------------+----------------+------------+---------+---------
+ bookings         |        1000000 | 72 MB      | 97 MB   | 169 MB
+ users            |          50000 | 6648 kB    | 4984 kB | 11 MB
+ events           |           2000 | 1600 kB    | 128 kB  | 1768 kB
+ event_categories |           3996 | 144 kB     | 104 kB  | 280 kB
+ venues           |            200 | 88 kB      | 32 kB   | 152 kB
+ categories       |             20 | 8192 bytes | 48 kB   | 64 kB
+ alembic_version  |              1 | 8192 bytes | 16 kB   | 24 kB
+(7 rows)
+
+
+--- Все индексы БД сервиса ---
+    tablename     |       indexname        |                                                 indexdef                                                 |  size   
+------------------+------------------------+----------------------------------------------------------------------------------------------------------+---------
+ alembic_version  | alembic_version_pkc    | CREATE UNIQUE INDEX alembic_version_pkc ON public.alembic_version USING btree (version_num)              | 16 kB
+ bookings         | bookings_pkey          | CREATE UNIQUE INDEX bookings_pkey ON public.bookings USING btree (id)                                    | 21 MB
+ bookings         | ix_bookings_created_at | CREATE INDEX ix_bookings_created_at ON public.bookings USING btree (created_at)                          | 29 MB
+ bookings         | ix_bookings_event_id   | CREATE INDEX ix_bookings_event_id ON public.bookings USING btree (event_id)                              | 9128 kB
+ bookings         | ix_bookings_id         | CREATE INDEX ix_bookings_id ON public.bookings USING btree (id)                                          | 21 MB
+ bookings         | ix_bookings_status     | CREATE INDEX ix_bookings_status ON public.bookings USING btree (status)                                  | 6360 kB
+ bookings         | ix_bookings_user_id    | CREATE INDEX ix_bookings_user_id ON public.bookings USING btree (user_id)                                | 9488 kB
+ categories       | categories_name_key    | CREATE UNIQUE INDEX categories_name_key ON public.categories USING btree (name)                          | 16 kB
+ categories       | categories_pkey        | CREATE UNIQUE INDEX categories_pkey ON public.categories USING btree (id)                                | 16 kB
+ categories       | ix_categories_id       | CREATE INDEX ix_categories_id ON public.categories USING btree (id)                                      | 16 kB
+ event_categories | event_categories_pkey  | CREATE UNIQUE INDEX event_categories_pkey ON public.event_categories USING btree (event_id, category_id) | 104 kB
+ events           | events_pkey            | CREATE UNIQUE INDEX events_pkey ON public.events USING btree (id)                                        | 64 kB
+ events           | ix_events_id           | CREATE INDEX ix_events_id ON public.events USING btree (id)                                              | 64 kB
+ users            | ix_users_email         | CREATE UNIQUE INDEX ix_users_email ON public.users USING btree (email)                                   | 2760 kB
+ users            | ix_users_id            | CREATE INDEX ix_users_id ON public.users USING btree (id)                                                | 1112 kB
+ users            | users_pkey             | CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)                                          | 1112 kB
+ venues           | ix_venues_id           | CREATE INDEX ix_venues_id ON public.venues USING btree (id)                                              | 16 kB
+ venues           | venues_pkey            | CREATE UNIQUE INDEX venues_pkey ON public.venues USING btree (id)                                        | 16 kB
+(18 rows)
+
+
+--- Селективность колонок bookings ---
+   attname   | n_distinct |  correlation  
+-------------+------------+---------------
+ created_at  |  -0.997816 |  0.0028262069
+ event_id    |       2000 | -0.0031985962
+ id          |         -1 |    0.99999994
+ seats_count |          4 |     0.2476884
+ status      |          4 |    0.40293783
+ total_price |       7967 |  -0.008712234
+ updated_at  |          0 |              
+ user_id     |      48572 |  0.0037989342
+(8 rows)
+
+
+--- Распределение status в bookings ---
+  status   | count  |  pct  
+-----------+--------+-------
+ confirmed | 599727 | 59.97
+ cancelled | 150533 | 15.05
+ completed | 149683 | 14.97
+ pending   | 100057 | 10.01
+(4 rows)
+
+
+--- Сколько бронирований у тестового пользователя ---
+ bookings_of_user 
+------------------
+               40
+(1 row)
+
+ avg_per_user | max_per_user 
+--------------+--------------
+        20.00 |           40
+(1 row)
+
+
+==============================================================
+   QUERY 1 - GET /api/users/{user_id}/stats  (поиск по id + агрегация)
+==============================================================
+--- EXPLAIN ---
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=4.88..94.52 rows=1 width=102)
+   ->  Nested Loop Left Join  (cost=4.88..94.38 rows=17 width=90)
+         ->  Index Scan using ix_users_id on users u  (cost=0.29..8.31 rows=1 width=78)
+               Index Cond: (id = 5706)
+         ->  Bitmap Heap Scan on bookings b  (cost=4.59..85.90 rows=17 width=16)
+               Recheck Cond: (user_id = 5706)
+               Filter: ((status)::text <> 'cancelled'::text)
+               ->  Bitmap Index Scan on ix_bookings_user_id  (cost=0.00..4.58 rows=21 width=0)
+                     Index Cond: (user_id = 5706)
+(9 rows)
+
+--- EXPLAIN ANALYZE (прогон 1) ---
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=4.88..94.52 rows=1 width=102) (actual time=0.158..0.159 rows=1 loops=1)
+   Buffers: shared hit=46
+   ->  Nested Loop Left Join  (cost=4.88..94.38 rows=17 width=90) (actual time=0.069..0.150 rows=30 loops=1)
+         Buffers: shared hit=46
+         ->  Index Scan using ix_users_id on users u  (cost=0.29..8.31 rows=1 width=78) (actual time=0.014..0.015 rows=1 loops=1)
+               Index Cond: (id = 5706)
+               Buffers: shared hit=3
+         ->  Bitmap Heap Scan on bookings b  (cost=4.59..85.90 rows=17 width=16) (actual time=0.052..0.128 rows=30 loops=1)
+               Recheck Cond: (user_id = 5706)
+               Filter: ((status)::text <> 'cancelled'::text)
+               Rows Removed by Filter: 10
+               Heap Blocks: exact=40
+               Buffers: shared hit=43
+               ->  Bitmap Index Scan on ix_bookings_user_id  (cost=0.00..4.58 rows=21 width=0) (actual time=0.042..0.042 rows=40 loops=1)
+                     Index Cond: (user_id = 5706)
+                     Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=2
+ Planning Time: 0.170 ms
+ Execution Time: 0.189 ms
+(20 rows)
+
+--- EXPLAIN ANALYZE (прогон 2) ---
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate  (cost=4.88..94.52 rows=1 width=102) (actual time=0.086..0.087 rows=1 loops=1)
+   Buffers: shared hit=46
+   ->  Nested Loop Left Join  (cost=4.88..94.38 rows=17 width=90) (actual time=0.029..0.079 rows=30 loops=1)
+         Buffers: shared hit=46
+         ->  Index Scan using ix_users_id on users u  (cost=0.29..8.31 rows=1 width=78) (actual time=0.007..0.008 rows=1 loops=1)
+               Index Cond: (id = 5706)
+               Buffers: shared hit=3
+         ->  Bitmap Heap Scan on bookings b  (cost=4.59..85.90 rows=17 width=16) (actual time=0.019..0.065 rows=30 loops=1)
+               Recheck Cond: (user_id = 5706)
+               Filter: ((status)::text <> 'cancelled'::text)
+               Rows Removed by Filter: 10
+               Heap Blocks: exact=40
+               Buffers: shared hit=43
+               ->  Bitmap Index Scan on ix_bookings_user_id  (cost=0.00..4.58 rows=21 width=0) (actual time=0.012..0.012 rows=40 loops=1)
+                     Index Cond: (user_id = 5706)
+                     Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=2
+ Planning Time: 0.231 ms
+ Execution Time: 0.115 ms
+(20 rows)
+
+
+==============================================================
+   QUERY 2 - GET /api/bookings?status=&from_date=  (несколько условий)
+==============================================================
+--- 2a. Основная выборка. EXPLAIN ---
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=1.17..10.32 rows=20 width=259)
+   ->  Nested Loop  (cost=1.17..75211.40 rows=164377 width=259)
+         ->  Nested Loop  (cost=1.01..71076.34 rows=164377 width=212)
+               ->  Nested Loop  (cost=0.72..66367.75 rows=164377 width=123)
+                     ->  Index Scan Backward using ix_bookings_created_at on bookings b  (cost=0.42..46574.43 rows=164377 width=49)
+                           Index Cond: (created_at >= '2026-06-01 00:00:00'::timestamp without time zone)
+                           Filter: ((status)::text = 'confirmed'::text)
+                     ->  Memoize  (cost=0.30..0.34 rows=1 width=78)
+                           Cache Key: b.user_id
+                           Cache Mode: logical
+                           ->  Index Scan using ix_users_id on users u  (cost=0.29..0.33 rows=1 width=78)
+                                 Index Cond: (id = b.user_id)
+               ->  Memoize  (cost=0.29..0.31 rows=1 width=93)
+                     Cache Key: b.event_id
+                     Cache Mode: logical
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..0.30 rows=1 width=93)
+                           Index Cond: (id = b.event_id)
+         ->  Memoize  (cost=0.15..0.20 rows=1 width=55)
+               Cache Key: e.venue_id
+               Cache Mode: logical
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55)
+                     Index Cond: (id = e.venue_id)
+(22 rows)
+
+--- 2a. EXPLAIN ANALYZE ---
+                                                                                  QUERY PLAN                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=1.17..10.32 rows=20 width=259) (actual time=0.070..0.314 rows=20 loops=1)
+   Buffers: shared hit=200
+   ->  Nested Loop  (cost=1.17..75211.40 rows=164377 width=259) (actual time=0.069..0.311 rows=20 loops=1)
+         Buffers: shared hit=200
+         ->  Nested Loop  (cost=1.01..71076.34 rows=164377 width=212) (actual time=0.057..0.263 rows=20 loops=1)
+               Buffers: shared hit=164
+               ->  Nested Loop  (cost=0.72..66367.75 rows=164377 width=123) (actual time=0.046..0.192 rows=20 loops=1)
+                     Buffers: shared hit=104
+                     ->  Index Scan Backward using ix_bookings_created_at on bookings b  (cost=0.42..46574.43 rows=164377 width=49) (actual time=0.030..0.085 rows=20 loops=1)
+                           Index Cond: (created_at >= '2026-06-01 00:00:00'::timestamp without time zone)
+                           Filter: ((status)::text = 'confirmed'::text)
+                           Rows Removed by Filter: 21
+                           Buffers: shared hit=44
+                     ->  Memoize  (cost=0.30..0.34 rows=1 width=78) (actual time=0.005..0.005 rows=1 loops=20)
+                           Cache Key: b.user_id
+                           Cache Mode: logical
+                           Hits: 0  Misses: 20  Evictions: 0  Overflows: 0  Memory Usage: 4kB
+                           Buffers: shared hit=60
+                           ->  Index Scan using ix_users_id on users u  (cost=0.29..0.33 rows=1 width=78) (actual time=0.004..0.004 rows=1 loops=20)
+                                 Index Cond: (id = b.user_id)
+                                 Buffers: shared hit=60
+               ->  Memoize  (cost=0.29..0.31 rows=1 width=93) (actual time=0.003..0.003 rows=1 loops=20)
+                     Cache Key: b.event_id
+                     Cache Mode: logical
+                     Hits: 0  Misses: 20  Evictions: 0  Overflows: 0  Memory Usage: 4kB
+                     Buffers: shared hit=60
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..0.30 rows=1 width=93) (actual time=0.003..0.003 rows=1 loops=20)
+                           Index Cond: (id = b.event_id)
+                           Buffers: shared hit=60
+         ->  Memoize  (cost=0.15..0.20 rows=1 width=55) (actual time=0.002..0.002 rows=1 loops=20)
+               Cache Key: e.venue_id
+               Cache Mode: logical
+               Hits: 2  Misses: 18  Evictions: 0  Overflows: 0  Memory Usage: 3kB
+               Buffers: shared hit=36
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55) (actual time=0.002..0.002 rows=1 loops=18)
+                     Index Cond: (id = e.venue_id)
+                     Buffers: shared hit=36
+ Planning:
+   Buffers: shared hit=34
+ Planning Time: 0.654 ms
+ Execution Time: 0.638 ms
+(41 rows)
+
+--- 2b. COUNT(*) для пагинации (в логах 91.8 мс). EXPLAIN ANALYZE, прогон 1 ---
+                                                                QUERY PLAN                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=16665.44..16665.45 rows=1 width=8) (actual time=57.121..63.536 rows=1 loops=1)
+   Buffers: shared hit=9244
+   ->  Gather  (cost=16665.22..16665.43 rows=2 width=8) (actual time=56.976..63.528 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=9244
+         ->  Partial Aggregate  (cost=15665.23..15665.24 rows=1 width=8) (actual time=54.050..54.051 rows=1 loops=3)
+               Buffers: shared hit=9244
+               ->  Parallel Seq Scan on bookings  (cost=0.00..15494.00 rows=68490 width=0) (actual time=0.011..51.326 rows=55207 loops=3)
+                     Filter: ((created_at >= '2026-06-01 00:00:00'::timestamp without time zone) AND ((status)::text = 'confirmed'::text))
+                     Rows Removed by Filter: 278127
+                     Buffers: shared hit=9244
+ Planning Time: 0.128 ms
+ Execution Time: 63.572 ms
+(14 rows)
+
+--- 2b. прогон 2 ---
+                                                                QUERY PLAN                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=16665.44..16665.45 rows=1 width=8) (actual time=57.352..63.653 rows=1 loops=1)
+   Buffers: shared hit=9244
+   ->  Gather  (cost=16665.22..16665.43 rows=2 width=8) (actual time=57.202..63.642 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=9244
+         ->  Partial Aggregate  (cost=15665.23..15665.24 rows=1 width=8) (actual time=53.869..53.870 rows=1 loops=3)
+               Buffers: shared hit=9244
+               ->  Parallel Seq Scan on bookings  (cost=0.00..15494.00 rows=68490 width=0) (actual time=0.013..51.191 rows=55207 loops=3)
+                     Filter: ((created_at >= '2026-06-01 00:00:00'::timestamp without time zone) AND ((status)::text = 'confirmed'::text))
+                     Rows Removed by Filter: 278127
+                     Buffers: shared hit=9244
+ Planning Time: 0.138 ms
+ Execution Time: 63.691 ms
+(14 rows)
+
+--- Селективность условия Query 2 ---
+ matched |  pct  
+---------+-------
+  165620 | 16.56
+(1 row)
+
+
+==============================================================
+   QUERY 3 - GET /api/users/{user_id}/bookings  (фильтр + сортировка + LIMIT)
+==============================================================
+--- EXPLAIN ---
+                                                QUERY PLAN                                                 
+-----------------------------------------------------------------------------------------------------------
+ Limit  (cost=208.47..208.52 rows=20 width=185)
+   ->  Sort  (cost=208.47..208.52 rows=21 width=185)
+         Sort Key: b.created_at DESC
+         ->  Nested Loop  (cost=5.01..208.01 rows=21 width=185)
+               ->  Nested Loop  (cost=4.87..204.05 rows=21 width=138)
+                     ->  Bitmap Heap Scan on bookings b  (cost=4.59..85.85 rows=21 width=49)
+                           Recheck Cond: (user_id = 5706)
+                           ->  Bitmap Index Scan on ix_bookings_user_id  (cost=0.00..4.58 rows=21 width=0)
+                                 Index Cond: (user_id = 5706)
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..5.63 rows=1 width=93)
+                           Index Cond: (id = b.event_id)
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55)
+                     Index Cond: (id = e.venue_id)
+(13 rows)
+
+--- EXPLAIN ANALYZE (прогон 1) ---
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=208.47..208.52 rows=20 width=185) (actual time=0.413..0.418 rows=20 loops=1)
+   Buffers: shared hit=246
+   ->  Sort  (cost=208.47..208.52 rows=21 width=185) (actual time=0.412..0.414 rows=20 loops=1)
+         Sort Key: b.created_at DESC
+         Sort Method: quicksort  Memory: 35kB
+         Buffers: shared hit=246
+         ->  Nested Loop  (cost=5.01..208.01 rows=21 width=185) (actual time=0.046..0.343 rows=40 loops=1)
+               Buffers: shared hit=243
+               ->  Nested Loop  (cost=4.87..204.05 rows=21 width=138) (actual time=0.041..0.269 rows=40 loops=1)
+                     Buffers: shared hit=163
+                     ->  Bitmap Heap Scan on bookings b  (cost=4.59..85.85 rows=21 width=49) (actual time=0.028..0.105 rows=40 loops=1)
+                           Recheck Cond: (user_id = 5706)
+                           Heap Blocks: exact=40
+                           Buffers: shared hit=43
+                           ->  Bitmap Index Scan on ix_bookings_user_id  (cost=0.00..4.58 rows=21 width=0) (actual time=0.018..0.019 rows=40 loops=1)
+                                 Index Cond: (user_id = 5706)
+                                 Buffers: shared hit=3
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..5.63 rows=1 width=93) (actual time=0.003..0.003 rows=1 loops=40)
+                           Index Cond: (id = b.event_id)
+                           Buffers: shared hit=120
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55) (actual time=0.001..0.001 rows=1 loops=40)
+                     Index Cond: (id = e.venue_id)
+                     Buffers: shared hit=80
+ Planning:
+   Buffers: shared hit=20
+ Planning Time: 0.470 ms
+ Execution Time: 0.496 ms
+(27 rows)
+
+--- EXPLAIN ANALYZE (прогон 2) ---
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=208.47..208.52 rows=20 width=185) (actual time=0.272..0.275 rows=20 loops=1)
+   Buffers: shared hit=243
+   ->  Sort  (cost=208.47..208.52 rows=21 width=185) (actual time=0.271..0.272 rows=20 loops=1)
+         Sort Key: b.created_at DESC
+         Sort Method: quicksort  Memory: 35kB
+         Buffers: shared hit=243
+         ->  Nested Loop  (cost=5.01..208.01 rows=21 width=185) (actual time=0.033..0.247 rows=40 loops=1)
+               Buffers: shared hit=243
+               ->  Nested Loop  (cost=4.87..204.05 rows=21 width=138) (actual time=0.029..0.194 rows=40 loops=1)
+                     Buffers: shared hit=163
+                     ->  Bitmap Heap Scan on bookings b  (cost=4.59..85.85 rows=21 width=49) (actual time=0.020..0.081 rows=40 loops=1)
+                           Recheck Cond: (user_id = 5706)
+                           Heap Blocks: exact=40
+                           Buffers: shared hit=43
+                           ->  Bitmap Index Scan on ix_bookings_user_id  (cost=0.00..4.58 rows=21 width=0) (actual time=0.012..0.012 rows=40 loops=1)
+                                 Index Cond: (user_id = 5706)
+                                 Buffers: shared hit=3
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..5.63 rows=1 width=93) (actual time=0.002..0.002 rows=1 loops=40)
+                           Index Cond: (id = b.event_id)
+                           Buffers: shared hit=120
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55) (actual time=0.001..0.001 rows=1 loops=40)
+                     Index Cond: (id = e.venue_id)
+                     Buffers: shared hit=80
+ Planning:
+   Buffers: shared hit=20
+ Planning Time: 0.341 ms
+ Execution Time: 0.313 ms
+(27 rows)
+
+
+--- Глубокая пагинация (OFFSET 100) ---
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=208.52..208.52 rows=1 width=185) (actual time=0.235..0.236 rows=0 loops=1)
+   Buffers: shared hit=243
+   ->  Sort  (cost=208.47..208.52 rows=21 width=185) (actual time=0.231..0.234 rows=40 loops=1)
+         Sort Key: b.created_at DESC
+         Sort Method: quicksort  Memory: 35kB
+         Buffers: shared hit=243
+         ->  Nested Loop  (cost=5.01..208.01 rows=21 width=185) (actual time=0.027..0.211 rows=40 loops=1)
+               Buffers: shared hit=243
+               ->  Nested Loop  (cost=4.87..204.05 rows=21 width=138) (actual time=0.024..0.163 rows=40 loops=1)
+                     Buffers: shared hit=163
+                     ->  Bitmap Heap Scan on bookings b  (cost=4.59..85.85 rows=21 width=49) (actual time=0.017..0.069 rows=40 loops=1)
+                           Recheck Cond: (user_id = 5706)
+                           Heap Blocks: exact=40
+                           Buffers: shared hit=43
+                           ->  Bitmap Index Scan on ix_bookings_user_id  (cost=0.00..4.58 rows=21 width=0) (actual time=0.010..0.010 rows=40 loops=1)
+                                 Index Cond: (user_id = 5706)
+                                 Buffers: shared hit=3
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..5.63 rows=1 width=93) (actual time=0.002..0.002 rows=1 loops=40)
+                           Index Cond: (id = b.event_id)
+                           Buffers: shared hit=120
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55) (actual time=0.001..0.001 rows=1 loops=40)
+                     Index Cond: (id = e.venue_id)
+                     Buffers: shared hit=80
+ Planning:
+   Buffers: shared hit=20
+ Planning Time: 0.393 ms
+ Execution Time: 0.268 ms
+(27 rows)
+
+
+################ ЗАДАНИЕ 25. Статистика использования индексов сервиса ################
+ schemaname |     relname      |      indexrelname      | idx_scan | idx_tup_read | idx_tup_fetch |  size   
+------------+------------------+------------------------+----------+--------------+---------------+---------
+ public     | events           | ix_events_id           |  1004127 |      1004127 |       1004127 | 64 kB
+ public     | users            | ix_users_id            |  1000051 |      1100049 |       1000042 | 1112 kB
+ public     | categories       | ix_categories_id       |     4016 |         4016 |          4016 | 16 kB
+ public     | venues           | ix_venues_id           |     2324 |         2324 |          2324 | 16 kB
+ public     | bookings         | ix_bookings_status     |       10 |      3546886 |             0 | 6360 kB
+ public     | bookings         | ix_bookings_event_id   |        8 |            8 |             0 | 9128 kB
+ public     | bookings         | ix_bookings_user_id    |        8 |          164 |             0 | 9488 kB
+ public     | bookings         | ix_bookings_created_at |        2 |           82 |            82 | 29 MB
+ public     | alembic_version  | alembic_version_pkc    |        0 |            0 |             0 | 16 kB
+ public     | bookings         | bookings_pkey          |        0 |            0 |             0 | 21 MB
+ public     | bookings         | ix_bookings_id         |        0 |            0 |             0 | 21 MB
+ public     | categories       | categories_name_key    |        0 |            0 |             0 | 16 kB
+ public     | categories       | categories_pkey        |        0 |            0 |             0 | 16 kB
+ public     | event_categories | event_categories_pkey  |        0 |            0 |             0 | 104 kB
+ public     | events           | events_pkey            |        0 |            0 |             0 | 64 kB
+ public     | users            | ix_users_email         |        0 |            0 |             0 | 2760 kB
+ public     | users            | users_pkey             |        0 |            0 |             0 | 1112 kB
+ public     | venues           | venues_pkey            |        0 |            0 |             0 | 16 kB
+(18 rows)
+

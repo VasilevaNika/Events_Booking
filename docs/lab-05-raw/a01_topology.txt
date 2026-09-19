@@ -1,0 +1,90 @@
+
+──────────────────────────────────────────────────────────────────────────────
+  1. Контейнеры шардов
+──────────────────────────────────────────────────────────────────────────────
+NAMES             STATUS                    PORTS
+booking_shard_0   Up 32 seconds (healthy)   0.0.0.0:5444->5432/tcp, [::]:5444->5432/tcp
+booking_shard_1   Up 32 seconds (healthy)   0.0.0.0:5445->5432/tcp, [::]:5445->5432/tcp
+booking_shard_2   Up 32 seconds (healthy)   0.0.0.0:5446->5432/tcp, [::]:5446->5432/tcp
+booking_shard_3   Up 32 seconds (healthy)   0.0.0.0:5447->5432/tcp, [::]:5447->5432/tcp
+
+──────────────────────────────────────────────────────────────────────────────
+  2. Каждый шард — отдельный сервер со своей базой и своей копией схемы
+──────────────────────────────────────────────────────────────────────────────
+shard-0: 16.15, system_identifier=7686926115681554470, база booking_shard, бронирований: 0
+shard-1: 16.15, system_identifier=7686926114774855718, база booking_shard, бронирований: 0
+shard-2: 16.15, system_identifier=7686926113940316198, база booking_shard, бронирований: 0
+shard-3: 16.15, system_identifier=7686926116733243430, база booking_shard, бронирований: 0
+
+system_identifier у всех разный: это четыре независимых кластера,
+а не реплики одного (у реплики он совпадает с primary).
+
+──────────────────────────────────────────────────────────────────────────────
+  3. Схема шарда
+──────────────────────────────────────────────────────────────────────────────
+                         Table "public.bookings"
+   Column    |           Type           | Collation | Nullable | Default 
+-------------+--------------------------+-----------+----------+---------
+ id          | bigint                   |           | not null | 
+ user_id     | integer                  |           | not null | 
+ event_id    | integer                  |           | not null | 
+ status      | character varying(20)    |           | not null | 
+ seats_count | integer                  |           | not null | 
+ total_price | double precision         |           | not null | 
+ created_at  | timestamp with time zone |           | not null | now()
+ updated_at  | timestamp with time zone |           |          | 
+Indexes:
+    "bookings_pkey" PRIMARY KEY, btree (id)
+    "ix_bookings_user_id_created_at" btree (user_id, created_at DESC)
+
+
+──────────────────────────────────────────────────────────────────────────────
+  4. Бэкенд видит все шарды: GET /api/shards
+──────────────────────────────────────────────────────────────────────────────
+{
+    "strategy": "consistent",
+    "shards_in_router": [
+        "shard-0",
+        "shard-1",
+        "shard-2",
+        "shard-3"
+    ],
+    "total_bookings": 0,
+    "shards": [
+        {
+            "shard": "shard-0",
+            "status": "up",
+            "bookings": 0,
+            "users": 0,
+            "in_router": true
+        },
+        {
+            "shard": "shard-1",
+            "status": "up",
+            "bookings": 0,
+            "users": 0,
+            "in_router": true
+        },
+        {
+            "shard": "shard-2",
+            "status": "up",
+            "bookings": 0,
+            "users": 0,
+            "in_router": true
+        },
+        {
+            "shard": "shard-3",
+            "status": "up",
+            "bookings": 0,
+            "users": 0,
+            "in_router": true
+        }
+    ],
+    "vnodes_per_shard": 100,
+    "ring_share_pct": {
+        "shard-0": 21.9,
+        "shard-1": 24.57,
+        "shard-2": 22.23,
+        "shard-3": 31.3
+    }
+}

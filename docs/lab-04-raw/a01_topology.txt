@@ -1,0 +1,147 @@
+
+──────────────────────────────────────────────────────────────────────────────
+  1. Контейнеры PostgreSQL
+──────────────────────────────────────────────────────────────────────────────
+NAMES                      STATUS                   PORTS
+booking_postgres_replica   Up 3 minutes (healthy)   0.0.0.0:5438->5432/tcp, [::]:5438->5432/tcp
+booking_postgres           Up 8 minutes (healthy)   0.0.0.0:5435->5432/tcp, [::]:5435->5432/tcp
+
+──────────────────────────────────────────────────────────────────────────────
+  2. Кто primary, а кто replica: pg_is_in_recovery()
+──────────────────────────────────────────────────────────────────────────────
+PRIMARY  (booking_postgres, localhost:5435)
+ in_recovery | server_addr | transaction_read_only |                                                       version                                                        
+-------------+-------------+-----------------------+----------------------------------------------------------------------------------------------------------------------
+ f           |             | off                   | PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+(1 row)
+
+REPLICA  (booking_postgres_replica, localhost:5438)
+ in_recovery | server_addr | transaction_read_only |                                                       version                                                        
+-------------+-------------+-----------------------+----------------------------------------------------------------------------------------------------------------------
+ t           |             | on                    | PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+(1 row)
+
+
+──────────────────────────────────────────────────────────────────────────────
+  3. Настройки репликации на primary
+──────────────────────────────────────────────────────────────────────────────
+           name            |           setting           
+---------------------------+-----------------------------
+ hba_file                  | /etc/postgresql/pg_hba.conf
+ max_replication_slots     | 10
+ max_wal_senders           | 10
+ synchronous_commit        | on
+ synchronous_standby_names | 
+ wal_level                 | replica
+(6 rows)
+
+
+──────────────────────────────────────────────────────────────────────────────
+  4. Правила pg_hba для replication-подключений
+──────────────────────────────────────────────────────────────────────────────
+ line_number | type  |   database    |  user_name   |  address  |  auth_method  
+-------------+-------+---------------+--------------+-----------+---------------
+          15 | local | {replication} | {all}        |           | trust
+          16 | host  | {replication} | {all}        | 127.0.0.1 | trust
+          17 | host  | {replication} | {all}        | ::1       | trust
+          23 | host  | {replication} | {replicator} | samenet   | scram-sha-256
+(4 rows)
+
+
+──────────────────────────────────────────────────────────────────────────────
+  5. Роли
+──────────────────────────────────────────────────────────────────────────────
+   rolname    | rolsuper | rolreplication 
+--------------+----------+----------------
+ booking_user | t        | t
+ replicator   | f        | t
+(2 rows)
+
+
+──────────────────────────────────────────────────────────────────────────────
+  6. pg_stat_replication на PRIMARY — подключённые реплики
+──────────────────────────────────────────────────────────────────────────────
+-[ RECORD 1 ]----+------------------------------
+pid              | 630
+usename          | replicator
+application_name | booking_replica
+client_addr      | 172.20.0.5
+state            | streaming
+sync_state       | async
+sent_lsn         | 4/FB003848
+write_lsn        | 4/FB003848
+flush_lsn        | 4/FB003848
+replay_lsn       | 4/FB003848
+write_lag        | 
+flush_lag        | 
+replay_lag       | 
+replay_gap_bytes | 0
+backend_start    | 2026-09-13 21:03:39.516216+00
+
+
+──────────────────────────────────────────────────────────────────────────────
+  7. Слот репликации на PRIMARY
+──────────────────────────────────────────────────────────────────────────────
+-[ RECORD 1 ]+---------------------
+slot_name    | booking_replica_slot
+slot_type    | physical
+active       | t
+active_pid   | 630
+restart_lsn  | 4/FB003848
+wal_status   | reserved
+retained_wal | 0 bytes
+
+
+──────────────────────────────────────────────────────────────────────────────
+  8. pg_stat_wal_receiver на REPLICA — приёмник потока WAL
+──────────────────────────────────────────────────────────────────────────────
+-[ RECORD 1 ]---------+------------------------------
+pid                   | 89
+status                | streaming
+sender_host           | postgres
+sender_port           | 5432
+slot_name             | booking_replica_slot
+receive_start_lsn     | 4/FB000000
+written_lsn           | 4/FB003848
+flushed_lsn           | 4/FB003848
+latest_end_lsn        | 4/FB003848
+last_msg_send_time    | 2026-09-13 21:06:30.211399+00
+last_msg_receipt_time | 2026-09-13 21:06:30.211587+00
+
+
+──────────────────────────────────────────────────────────────────────────────
+  9. Позиция в WAL: primary против replica
+──────────────────────────────────────────────────────────────────────────────
+ primary_current_lsn 
+---------------------
+ 4/FB003848
+(1 row)
+
+ received_lsn | replayed_lsn | replay_paused 
+--------------+--------------+---------------
+ 4/FB003848   | 4/FB003848   | f
+(1 row)
+
+
+──────────────────────────────────────────────────────────────────────────────
+  10. Конфигурация standby на реплике
+──────────────────────────────────────────────────────────────────────────────
+-rw-r--r-- 1 postgres postgres 0 Sep 13 21:03 /var/lib/postgresql/data/standby.signal
+primary_conninfo = 'host=postgres port=5432 user=replicator password=*** application_name=booking_replica'
+primary_slot_name = 'booking_replica_slot'
+
+──────────────────────────────────────────────────────────────────────────────
+  11. Копия одинаковая: объём и структура на обоих серверах
+──────────────────────────────────────────────────────────────────────────────
+PRIMARY
+ bookings | bookings_partitions | alembic | db_size 
+----------+---------------------+---------+---------
+  5000002 |                  17 | 003     | 1991 MB
+(1 row)
+
+REPLICA
+ bookings | bookings_partitions | alembic | db_size 
+----------+---------------------+---------+---------
+  5000002 |                  17 | 003     | 1991 MB
+(1 row)
+

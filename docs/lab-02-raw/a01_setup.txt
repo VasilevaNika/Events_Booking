@@ -1,0 +1,16 @@
+Pager usage is off.
+######## ЗАДАНИЕ 1. Создание экспериментальной таблицы ########
+DROP SCHEMA
+CREATE SCHEMA
+CREATE TABLE
+                                            Table "lab2.events"
+   Column   |            Type             | Collation | Nullable |                 Default                 
+------------+-----------------------------+-----------+----------+-----------------------------------------
+ id         | bigint                      |           | not null | nextval('lab2.events_id_seq'::regclass)
+ user_id    | bigint                      |           | not null | 
+ event_type | character varying(50)       |           | not null | 
+ payload    | jsonb                       |           |          | 
+ created_at | timestamp without time zone |           | not null | 
+Indexes:
+    "events_pkey" PRIMARY KEY, btree (id)
+

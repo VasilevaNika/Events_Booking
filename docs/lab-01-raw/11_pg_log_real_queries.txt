@@ -1,0 +1,54 @@
+2026-09-10 10:02:35.811 UTC [2416] LOG:  duration: 0.053 ms  statement: BEGIN
+2026-09-10 10:02:35.813 UTC [2416] LOG:  duration: 1.197 ms  statement: 
+	            SELECT
+	                b.id, b.user_id, b.event_id, b.status, b.seats_count,
+	                b.total_price, b.created_at, b.updated_at,
+	                e.title      AS event_title,
+	                e.start_time AS event_start_time,
+	                v.name       AS venue_name
+	            FROM bookings b
+	            JOIN events e ON b.event_id = e.id
+	            JOIN venues v ON e.venue_id = v.id
+	            WHERE b.user_id = 5706
+	            ORDER BY b.created_at DESC
+	            LIMIT 20 OFFSET 0
+	        
+2026-09-10 10:02:35.817 UTC [2416] LOG:  duration: 0.067 ms  statement: ROLLBACK
+2026-09-10 10:02:35.894 UTC [2416] LOG:  duration: 0.043 ms  statement: BEGIN
+2026-09-10 10:02:35.895 UTC [2416] LOG:  duration: 0.530 ms  statement: 
+	            SELECT
+	                u.id,
+	                u.name,
+	                u.email,
+	                COUNT(b.id)                             AS total_bookings,
+	                COALESCE(SUM(b.total_price), 0)         AS total_spent,
+	                COALESCE(AVG(b.total_price), 0)         AS avg_booking_price
+	            FROM users u
+	            LEFT JOIN bookings b ON u.id = b.user_id AND b.status != 'cancelled'
+	            WHERE u.id = 5706
+	            GROUP BY u.id, u.name, u.email
+	        
+2026-09-10 10:02:35.896 UTC [2416] LOG:  duration: 0.053 ms  statement: ROLLBACK
+2026-09-10 10:02:35.973 UTC [2416] LOG:  duration: 0.037 ms  statement: BEGIN
+2026-09-10 10:02:35.978 UTC [2416] LOG:  duration: 4.058 ms  statement: 
+	            SELECT
+	                b.id, b.user_id, b.event_id, b.status, b.seats_count,
+	                b.total_price, b.created_at, b.updated_at,
+	                u.name  AS user_name,
+	                u.email AS user_email,
+	                e.title AS event_title,
+	                e.start_time AS event_start_time,
+	                v.name  AS venue_name
+	            FROM bookings b
+	            JOIN users  u ON b.user_id  = u.id
+	            JOIN events e ON b.event_id = e.id
+	            JOIN venues v ON e.venue_id = v.id
+	            WHERE 1=1 AND b.status = 'confirmed' AND b.created_at >= '2026-06-01T00:00:00'::timestamp
+	            ORDER BY b.created_at DESC
+	            LIMIT 20 OFFSET 0
+	        
+2026-09-10 10:02:36.072 UTC [2416] LOG:  duration: 91.806 ms  statement: SELECT count(*) AS count_1 
+	FROM (SELECT bookings.id AS bookings_id, bookings.user_id AS bookings_user_id, bookings.event_id AS bookings_event_id, bookings.status AS bookings_status, bookings.seats_count AS bookings_seats_count, bookings.total_price AS bookings_total_price, bookings.created_at AS bookings_created_at, bookings.updated_at AS bookings_updated_at 
+	FROM bookings 
+	WHERE bookings.status = 'confirmed' AND bookings.created_at >= '2026-06-01T00:00:00'::timestamp) AS anon_1
+2026-09-10 10:02:36.075 UTC [2416] LOG:  duration: 0.068 ms  statement: ROLLBACK

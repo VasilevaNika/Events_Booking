@@ -1,0 +1,131 @@
+Pager usage is off.
+Timing is on.
+
+################################################################
+####  КОНТРОЛЬНАЯ ТОЧКА: добавляем :add строк                ####
+################################################################
+--- ЗАДАНИЕ 2: генерация данных ---
+INSERT 0 900000
+Time: 7896.721 ms (00:07.897)
+Timing is off.
+VACUUM
+Timing is on.
+
+--- ЗАДАНИЕ 3: размер таблицы ---
+ rows_total 
+------------
+    1000000
+(1 row)
+
+Time: 64.452 ms
+ table_size | total_size 
+------------+------------
+ 65 MB      | 87 MB
+(1 row)
+
+Time: 1.169 ms
+ heap_pages 
+------------
+       8334
+(1 row)
+
+Time: 1.556 ms
+ rows_for_user_123 
+-------------------
+                11
+(1 row)
+
+Time: 64.220 ms
+
+--- ЗАДАНИЕ 4: SELECT БЕЗ дополнительного индекса (прогон 1) ---
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..14543.43 rows=11 width=36) (actual time=8.754..66.125 rows=11 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=8334
+   ->  Parallel Seq Scan on events  (cost=0.00..13542.33 rows=5 width=36) (actual time=13.344..49.767 rows=4 loops=3)
+         Filter: (user_id = 123)
+         Rows Removed by Filter: 333330
+         Buffers: shared hit=8334
+ Planning:
+   Buffers: shared hit=9
+ Planning Time: 0.194 ms
+ Execution Time: 66.163 ms
+(12 rows)
+
+Time: 67.038 ms
+--- ЗАДАНИЕ 4: прогон 2 (в отчёт) ---
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..14543.43 rows=11 width=36) (actual time=10.648..79.285 rows=11 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=8334
+   ->  Parallel Seq Scan on events  (cost=0.00..13542.33 rows=5 width=36) (actual time=15.782..58.070 rows=4 loops=3)
+         Filter: (user_id = 123)
+         Rows Removed by Filter: 333330
+         Buffers: shared hit=8334
+ Planning Time: 0.112 ms
+ Execution Time: 79.329 ms
+(10 rows)
+
+Time: 80.018 ms
+
+--- ЗАДАНИЕ 5: создаём индекс ---
+CREATE INDEX
+Time: 899.535 ms
+Timing is off.
+VACUUM
+Timing is on.
+--- ЗАДАНИЕ 5: SELECT С индексом (прогон 1) ---
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on events  (cost=4.51..47.45 rows=11 width=36) (actual time=0.109..0.135 rows=11 loops=1)
+   Recheck Cond: (user_id = 123)
+   Heap Blocks: exact=11
+   Buffers: shared hit=14 read=3
+   ->  Bitmap Index Scan on idx_events_user_id  (cost=0.00..4.51 rows=11 width=0) (actual time=0.101..0.101 rows=11 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=3 read=3
+ Planning:
+   Buffers: shared hit=18
+ Planning Time: 0.158 ms
+ Execution Time: 0.160 ms
+(11 rows)
+
+Time: 0.804 ms
+--- ЗАДАНИЕ 5: прогон 2 (в отчёт) ---
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on events  (cost=4.51..47.45 rows=11 width=36) (actual time=0.039..0.070 rows=11 loops=1)
+   Recheck Cond: (user_id = 123)
+   Heap Blocks: exact=11
+   Buffers: shared hit=14
+   ->  Bitmap Index Scan on idx_events_user_id  (cost=0.00..4.51 rows=11 width=0) (actual time=0.026..0.026 rows=11 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=3
+ Planning Time: 0.128 ms
+ Execution Time: 0.110 ms
+(9 rows)
+
+Time: 0.837 ms
+
+--- ЗАДАНИЕ 10 (частично): размер индекса на этом объёме ---
+     index_name     | index_size 
+--------------------+------------
+ events_pkey        | 21 MB
+ idx_events_user_id | 9088 kB
+(2 rows)
+
+Time: 5.152 ms
+ total_with_index 
+------------------
+ 95 MB
+(1 row)
+
+Time: 0.644 ms
+
+--- убираем индекс перед следующей загрузкой ---
+DROP INDEX
+Time: 8.833 ms

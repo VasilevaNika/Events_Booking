@@ -1,0 +1,204 @@
+Pager usage is off.
+Timing is on.
+################ ЧАСТЬ 3. RANGE по числовому значению ################
+CREATE TABLE
+Time: 3.142 ms
+CREATE TABLE
+Time: 6.958 ms
+CREATE TABLE
+Time: 5.918 ms
+CREATE TABLE
+Time: 7.277 ms
+INSERT 0 6
+Time: 1.712 ms
+INSERT 0 60000
+Time: 135.383 ms
+Timing is off.
+VACUUM
+Timing is on.
+--- распределение по партициям ---
+     partition_name      | count 
+-------------------------+-------
+ lab3.products_cheap     |  1177
+ lab3.products_medium    | 10653
+ lab3.products_expensive | 48176
+(3 rows)
+
+Time: 8.665 ms
+--- куда попали именованные товары (границы 100 и 1000) ---
+ id |    name    |   price   |     partition_name      
+----+------------+-----------+-------------------------
+  1 | Ручка      |     49.90 | lab3.products_cheap
+  2 | Блокнот    |     99.99 | lab3.products_cheap
+  3 | Клавиатура |    100.00 | lab3.products_medium
+  4 | Монитор    |    999.99 | lab3.products_medium
+  5 | Ноутбук    |   1000.00 | lab3.products_expensive
+  6 | Сервер     | 250000.00 | lab3.products_expensive
+(6 rows)
+
+Time: 3.516 ms
+--- запрос price >= 100 AND price < 500 ---
+                                                        QUERY PLAN                                                         
+---------------------------------------------------------------------------------------------------------------------------
+ Seq Scan on products_medium products  (cost=0.00..238.79 rows=4698 width=30) (actual time=0.005..1.445 rows=4709 loops=1)
+   Filter: ((price >= '100'::numeric) AND (price < '500'::numeric))
+   Rows Removed by Filter: 5944
+   Buffers: shared hit=79
+ Planning:
+   Buffers: shared hit=19
+ Planning Time: 0.160 ms
+ Execution Time: 1.586 ms
+(8 rows)
+
+Time: 2.355 ms
+
+################ ЧАСТЬ 4. LIST PARTITIONING ################
+CREATE TABLE
+Time: 1.504 ms
+CREATE TABLE
+Time: 5.103 ms
+CREATE TABLE
+Time: 6.206 ms
+CREATE TABLE
+Time: 6.538 ms
+INSERT 0 60000
+Time: 82.876 ms
+Timing is off.
+VACUUM
+Timing is on.
+      partition_name       | count 
+---------------------------+-------
+ lab3.customers_b2c        | 42394
+ lab3.customers_b2b        | 16700
+ lab3.customers_enterprise |   906
+(3 rows)
+
+Time: 8.670 ms
+--- запрос customer_type = B2B ---
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Seq Scan on customers_b2b customers  (cost=0.00..331.75 rows=16700 width=30) (actual time=0.008..1.842 rows=16700 loops=1)
+   Filter: ((customer_type)::text = 'B2B'::text)
+   Buffers: shared hit=123
+ Planning:
+   Buffers: shared hit=9
+ Planning Time: 0.178 ms
+ Execution Time: 2.388 ms
+(7 rows)
+
+Time: 3.206 ms
+
+################ ЧАСТЬ 5. LIST: неизвестное значение ################
+--- вставка VIP без DEFAULT-партиции — ожидаем ошибку ---
+Time: 0.608 ms
+--- создаём DEFAULT-партицию и повторяем вставку ---
+psql:/tmp/lab03/a02_numeric_list_hash.sql:78: ERROR:  no partition of relation "customers" found for row
+DETAIL:  Partition key of the failing row contains (customer_type) = (VIP).
+CREATE TABLE
+Time: 6.803 ms
+INSERT 0 1
+Time: 1.718 ms
+ id  |    name    | customer_type |     partition_name     
+-----+------------+---------------+------------------------
+ 100 | Клиент 100 | B2C           | lab3.customers_b2c
+ 100 | Test User  | VIP           | lab3.customers_default
+(2 rows)
+
+Time: 3.557 ms
+--- цена DEFAULT: теперь её приходится проверять при поиске ---
+VACUUM
+Time: 349.754 ms
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Seq Scan on customers_default customers  (cost=0.00..1.01 rows=1 width=22) (actual time=0.007..0.008 rows=1 loops=1)
+   Filter: ((customer_type)::text = 'VIP'::text)
+   Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=15
+ Planning Time: 0.153 ms
+ Execution Time: 0.021 ms
+(7 rows)
+
+Time: 0.547 ms
+--- и добавить новую партицию для VIP уже нельзя, пока строка лежит в DEFAULT ---
+psql:/tmp/lab03/a02_numeric_list_hash.sql:94: ERROR:  updated partition constraint for default partition "customers_default" would be violated by some row
+Time: 1.098 ms
+
+################ ЧАСТЬ 6. HASH PARTITIONING ################
+CREATE TABLE
+Time: 2.296 ms
+CREATE TABLE
+Time: 2.134 ms
+CREATE TABLE
+Time: 1.733 ms
+CREATE TABLE
+Time: 2.061 ms
+CREATE TABLE
+Time: 1.509 ms
+INSERT 0 800000
+Time: 1378.029 ms (00:01.378)
+Timing is off.
+VACUUM
+Timing is on.
+--- распределение по hash-партициям ---
+   partition_name   | count  |  pct  
+--------------------+--------+-------
+ lab3.user_events_0 | 200566 | 25.07
+ lab3.user_events_1 | 200083 | 25.01
+ lab3.user_events_2 | 200263 | 25.03
+ lab3.user_events_3 | 199088 | 24.89
+(4 rows)
+
+Time: 44.000 ms
+--- поиск по ключу хэширования: pruning работает ---
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=3982.10..3982.11 rows=1 width=8) (actual time=9.478..9.479 rows=1 loops=1)
+   Buffers: shared hit=1475
+   ->  Seq Scan on user_events_0 user_events  (cost=0.00..3982.08 rows=9 width=0) (actual time=0.953..9.469 rows=6 loops=1)
+         Filter: (user_id = 12345)
+         Rows Removed by Filter: 200560
+         Buffers: shared hit=1475
+ Planning:
+   Buffers: shared hit=6
+ Planning Time: 0.203 ms
+ Execution Time: 9.508 ms
+(10 rows)
+
+Time: 10.120 ms
+--- поиск по дате: pruning НЕ работает, читаются все партиции ---
+                                                                           QUERY PLAN                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=15324.40..15324.41 rows=1 width=8) (actual time=62.986..67.497 rows=1 loops=1)
+   Buffers: shared hit=5884
+   ->  Gather  (cost=15324.19..15324.40 rows=2 width=8) (actual time=62.819..67.490 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=5884
+         ->  Partial Aggregate  (cost=14324.19..14324.20 rows=1 width=8) (actual time=60.220..60.221 rows=1 loops=3)
+               Buffers: shared hit=5884
+               ->  Parallel Append  (cost=0.00..14255.89 rows=27319 width=0) (actual time=0.010..59.100 rows=22037 loops=3)
+                     Buffers: shared hit=5884
+                     ->  Parallel Seq Scan on user_events_0 user_events_1  (cost=0.00..3539.65 rows=9551 width=0) (actual time=0.012..46.349 rows=16783 loops=1)
+                           Filter: (created_at >= (now() - '30 days'::interval))
+                           Rows Removed by Filter: 183783
+                           Buffers: shared hit=1475
+                     ->  Parallel Seq Scan on user_events_2 user_events_3  (cost=0.00..3534.53 rows=9758 width=0) (actual time=0.012..38.296 rows=16632 loops=1)
+                           Filter: (created_at >= (now() - '30 days'::interval))
+                           Rows Removed by Filter: 183631
+                           Buffers: shared hit=1473
+                     ->  Parallel Seq Scan on user_events_1 user_events_2  (cost=0.00..3531.68 rows=9828 width=0) (actual time=0.007..15.672 rows=5488 loops=3)
+                           Filter: (created_at >= (now() - '30 days'::interval))
+                           Rows Removed by Filter: 61206
+                           Buffers: shared hit=1472
+                     ->  Parallel Seq Scan on user_events_3 user_events_4  (cost=0.00..3513.44 rows=9432 width=0) (actual time=0.007..41.531 rows=16233 loops=1)
+                           Filter: (created_at >= (now() - '30 days'::interval))
+                           Rows Removed by Filter: 182855
+                           Buffers: shared hit=1464
+ Planning:
+   Buffers: shared hit=15
+ Planning Time: 0.135 ms
+ Execution Time: 67.527 ms
+(30 rows)
+
+Time: 68.289 ms

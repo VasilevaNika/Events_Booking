@@ -1,0 +1,165 @@
+Pager usage is off.
+Timing is on.
+######## ЗАДАНИЕ 18. Оптимизация Запроса 2 ########
+--- ИСХОДНО (только ix_bookings_created_at) ---
+                                                                  QUERY PLAN                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on bookings b  (cost=10454.36..65367.39 rows=420090 width=41) (actual time=89.499..787.529 rows=410270 loops=1)
+   Recheck Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+   Heap Blocks: exact=45458
+   Buffers: shared hit=1400 read=45435 written=2
+   ->  Bitmap Index Scan on ix_bookings_created_at  (cost=0.00..10349.34 rows=420090 width=0) (actual time=74.844..74.845 rows=410270 loops=1)
+         Index Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+         Buffers: shared hit=1377
+ Planning:
+   Buffers: shared hit=142 read=14
+ Planning Time: 1.146 ms
+ Execution Time: 823.350 ms
+(11 rows)
+
+Time: 827.113 ms
+
+=== ВАРИАНТ 1: покрывающий индекс (INCLUDE) ===
+CREATE INDEX
+Time: 8144.375 ms (00:08.144)
+Timing is off.
+VACUUM
+Timing is on.
+ covering_size 
+---------------
+ 312 MB
+(1 row)
+
+Time: 0.980 ms
+                                                                          QUERY PLAN                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using ix_bookings_created_covering on bookings b  (cost=0.44..21609.38 rows=416247 width=41) (actual time=0.031..199.290 rows=410269 loops=1)
+   Index Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+   Heap Fetches: 0
+   Buffers: shared hit=165251 read=3260
+ Planning:
+   Buffers: shared hit=64 read=3
+ Planning Time: 0.713 ms
+ Execution Time: 228.965 ms
+(8 rows)
+
+Time: 230.532 ms
+                                                                          QUERY PLAN                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Index Only Scan using ix_bookings_created_covering on bookings b  (cost=0.44..21609.38 rows=416247 width=41) (actual time=0.024..186.877 rows=410269 loops=1)
+   Index Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+   Heap Fetches: 0
+   Buffers: shared hit=168511
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.251 ms
+ Execution Time: 216.822 ms
+(8 rows)
+
+Time: 217.674 ms
+DROP INDEX
+Time: 120.950 ms
+
+=== ВАРИАНТ 2: BRIN вместо B-tree ===
+CREATE INDEX
+Time: 2159.563 ms (00:02.160)
+Timing is off.
+VACUUM
+Timing is on.
+ brin_size | btree_size 
+-----------+------------
+ 32 kB     | 143 MB
+(1 row)
+
+Time: 0.763 ms
+BEGIN
+Time: 0.259 ms
+DROP INDEX
+Time: 0.781 ms
+                                                             QUERY PLAN                                                              
+-------------------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..134985.47 rows=416497 width=41) (actual time=18.639..1028.902 rows=410269 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=13008 read=32453
+   ->  Parallel Seq Scan on bookings b  (cost=0.00..92335.77 rows=173540 width=41) (actual time=16.839..909.998 rows=136756 loops=3)
+         Filter: ((created_at < now()) AND (created_at >= (now() - '30 days'::interval)))
+         Rows Removed by Filter: 1529910
+         Buffers: shared hit=13008 read=32453
+ Planning:
+   Buffers: shared hit=59
+ Planning Time: 1.104 ms
+ JIT:
+   Functions: 12
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 3.221 ms, Inlining 0.000 ms, Optimization 5.576 ms, Emission 44.707 ms, Total 53.504 ms
+ Execution Time: 1105.871 ms
+(16 rows)
+
+Time: 1107.795 ms (00:01.108)
+ROLLBACK
+Time: 0.327 ms
+DROP INDEX
+Time: 10.944 ms
+
+=== ВАРИАНТ 3: LIMIT (реальный сценарий API с пагинацией) ===
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.44..23.97 rows=50 width=41) (actual time=0.028..0.444 rows=50 loops=1)
+   Buffers: shared hit=21 read=32
+   ->  Index Scan Backward using ix_bookings_created_at on bookings b  (cost=0.44..196272.94 rows=416997 width=41) (actual time=0.027..0.430 rows=50 loops=1)
+         Index Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+         Buffers: shared hit=21 read=32
+ Planning:
+   Buffers: shared hit=41 read=4
+ Planning Time: 0.501 ms
+ Execution Time: 0.484 ms
+(9 rows)
+
+Time: 2.157 ms
+                                                                          QUERY PLAN                                                                          
+--------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.44..23.97 rows=50 width=41) (actual time=0.021..0.138 rows=50 loops=1)
+   Buffers: shared hit=53
+   ->  Index Scan Backward using ix_bookings_created_at on bookings b  (cost=0.44..196272.94 rows=416997 width=41) (actual time=0.020..0.127 rows=50 loops=1)
+         Index Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+         Buffers: shared hit=53
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.256 ms
+ Execution Time: 0.173 ms
+(9 rows)
+
+Time: 1.006 ms
+
+=== ВАРИАНТ 4: keyset-пагинация (без OFFSET) ===
+                                                                          QUERY PLAN                                                                           
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.44..3.92 rows=50 width=41) (actual time=0.077..0.380 rows=50 loops=1)
+   Buffers: shared hit=14 read=39
+   ->  Index Scan Backward using ix_bookings_created_at on bookings b  (cost=0.44..337881.48 rows=4856513 width=41) (actual time=0.076..0.367 rows=50 loops=1)
+         Index Cond: (created_at < (now() - '10 days'::interval))
+         Buffers: shared hit=14 read=39
+ Planning Time: 0.203 ms
+ Execution Time: 0.421 ms
+(7 rows)
+
+Time: 1.196 ms
+
+=== ВАРИАНТ 5: сузить окно до 1 дня (селективность 0.27%) ===
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on bookings b  (cost=380.17..31895.36 rows=15193 width=41) (actual time=7.469..83.539 rows=13608 loops=1)
+   Recheck Cond: ((created_at >= (now() - '1 day'::interval)) AND (created_at < now()))
+   Heap Blocks: exact=11832
+   Buffers: shared hit=1853 read=10027 written=2
+   ->  Bitmap Index Scan on ix_bookings_created_at  (cost=0.00..376.37 rows=15193 width=0) (actual time=4.198..4.198 rows=13608 loops=1)
+         Index Cond: ((created_at >= (now() - '1 day'::interval)) AND (created_at < now()))
+         Buffers: shared hit=3 read=45
+ Planning:
+   Buffers: shared hit=8
+ Planning Time: 0.507 ms
+ Execution Time: 85.061 ms
+(11 rows)
+
+Time: 86.408 ms

@@ -1,0 +1,8 @@
+primary: 5 000 005 бронирований, max id 5000005
+shard-1: удалены записи, которых нет на primary: [(5000006, 101)]
+shard-0:   1 101 949 бронирований; индексы: bookings_pkey, ix_bookings_created_at_id, ix_bookings_user_id_created_at
+shard-1:   1 232 345 бронирований; индексы: bookings_pkey, ix_bookings_created_at_id, ix_bookings_user_id_created_at
+shard-2:   1 114 852 бронирований; индексы: bookings_pkey, ix_bookings_created_at_id, ix_bookings_user_id_created_at
+shard-3:   1 550 859 бронирований; индексы: bookings_pkey, ix_bookings_created_at_id, ix_bookings_user_id_created_at
+
+сумма по шардам 5 000 005, на primary 5 000 005 — совпадает

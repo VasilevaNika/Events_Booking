@@ -1,0 +1,259 @@
+version: "3.9"
+
+# Общие настройки шардов (лабораторная №5). Шарды — полностью независимые
+# экземпляры PostgreSQL: без репликации между собой и без общего каталога.
+x-shard: &shard
+  image: postgres:16
+  environment:
+    POSTGRES_USER: booking_user
+    POSTGRES_PASSWORD: booking_pass
+    POSTGRES_DB: booking_shard
+  shm_size: 256mb
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U booking_user -d booking_shard"]
+    interval: 5s
+    timeout: 5s
+    retries: 5
+
+services:
+  # ---------------------------------------------------------------------------
+  # PRIMARY — принимает INSERT / UPDATE / DELETE и чтения, которым нужны самые
+  # свежие данные. Имя сервиса и контейнера оставлены прежними
+  # (postgres / booking_postgres), чтобы скрипты лабораторных №1–3 работали.
+  # ---------------------------------------------------------------------------
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    image: booking-postgres-cron:16
+    container_name: booking_postgres
+    environment:
+      POSTGRES_USER: booking_user
+      POSTGRES_PASSWORD: booking_pass
+      POSTGRES_DB: booking_db
+    command:
+      - postgres
+      # pg_cron (лабораторная №3): предзагрузка библиотеки и БД с расписанием
+      - -c
+      - shared_preload_libraries=pg_cron
+      - -c
+      - cron.database_name=booking_db
+      # streaming replication (лабораторная №4)
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf   # правило для роли replicator
+      - -c
+      - wal_level=replica                      # WAL содержит всё, что нужно реплике
+      - -c
+      - max_wal_senders=10                     # сколько реплик могут стримить WAL
+      - -c
+      - max_replication_slots=10
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    shm_size: 1gb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking_user -d booking_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # REPLICA — физическая копия primary в режиме hot standby. Только чтение.
+  #
+  # При первом старте replica-entrypoint.sh сам снимает pg_basebackup с primary,
+  # создаёт слот репликации и включает стриминг WAL. Дальше реплика непрерывно
+  # воспроизводит WAL, полученный от primary.
+  # ---------------------------------------------------------------------------
+  postgres-replica:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    image: booking-postgres-cron:16
+    container_name: booking_postgres_replica
+    entrypoint: ["bash", "/docker/replica-entrypoint.sh"]
+    command:
+      - postgres
+      - -c
+      - hot_standby=on            # разрешить SELECT, пока реплика воспроизводит WAL
+      - -c
+      - hot_standby_feedback=on   # не отменять долгие SELECT из-за VACUUM на primary
+    environment:
+      PRIMARY_HOST: postgres
+      PRIMARY_PORT: "5432"
+      PRIMARY_DB: booking_db
+      # суперпользователь нужен только при первом развёртывании:
+      # создать роль replicator и слот (см. replica-bootstrap.sql)
+      PRIMARY_ADMIN_USER: booking_user
+      PRIMARY_ADMIN_PASSWORD: booking_pass
+      REPLICATION_USER: replicator
+      REPLICATION_PASSWORD: replicator_pass
+      REPLICATION_SLOT: booking_replica_slot
+      REPLICA_APPLICATION_NAME: booking_replica
+    ports:
+      - "5438:5432"
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./docker/postgres/replica-entrypoint.sh:/docker/replica-entrypoint.sh:ro
+      - ./docker/postgres/replica-bootstrap.sql:/docker/replica-bootstrap.sql:ro
+    shm_size: 1gb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking_user -d booking_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      # первый старт — это копирование всего кластера, даём на него время
+      start_period: 600s
+
+
+  postgres-replica-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    image: booking-postgres-cron:16
+    container_name: booking_postgres_replica2
+    entrypoint: ["bash", "/docker/replica-entrypoint.sh"]
+    command:
+      - postgres
+      - -c
+      - hot_standby=on
+      - -c
+      - hot_standby_feedback=on
+    environment:
+      PRIMARY_HOST: postgres
+      PRIMARY_PORT: "5432"
+      PRIMARY_DB: booking_db
+      PRIMARY_ADMIN_USER: booking_user
+      PRIMARY_ADMIN_PASSWORD: booking_pass
+      REPLICATION_USER: replicator
+      REPLICATION_PASSWORD: replicator_pass
+      REPLICATION_SLOT: booking_replica2_slot       
+      REPLICA_APPLICATION_NAME: booking_replica_2   
+    ports:
+      - "5439:5432"                                
+    volumes:
+      - postgres_replica2_data:/var/lib/postgresql/data
+      - ./docker/postgres/replica-entrypoint.sh:/docker/replica-entrypoint.sh:ro
+      - ./docker/postgres/replica-bootstrap.sql:/docker/replica-bootstrap.sql:ro
+    shm_size: 1gb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking_user -d booking_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 600s
+
+
+  # Локальный SMTP-приёмник для alert'ов лабораторной №3.
+  # Принимает почту на 1025, печатает её в лог и складывает .eml в ./mailbox.
+  # Позволяет показать настоящую отправку письма без внешних учёток и без
+  # дополнительных образов — использует уже собранный образ backend.
+  mailsink:
+    build: .
+    image: booking-backend:latest
+    container_name: booking_mailsink
+    environment:
+      # в slim-образе локаль ASCII, без этого print() экранирует эмодзи в логе
+      PYTHONIOENCODING: utf-8
+    command: python scripts/lab03/smtp_sink.py --host 0.0.0.0 --port 1025 --out /app/mailbox
+    volumes:
+      - ./mailbox:/app/mailbox
+    ports:
+      - "1025:1025"
+
+  # ---------------------------------------------------------------------------
+  # ШАРДЫ (лабораторная №5). Бронирования распределены между ними по user_id;
+  # какой пользователь где лежит, решает router в коде бэкенда (app/sharding).
+  # Порты 5440–5443 на этой машине заняты другим проектом, поэтому 5444–5447.
+  # shard-3 — «новый» шард для эксперимента 3 → 4.
+  # ---------------------------------------------------------------------------
+  shard-0:
+    <<: *shard
+    container_name: booking_shard_0
+    ports:
+      - "5444:5432"
+    volumes:
+      - shard_0_data:/var/lib/postgresql/data
+      - ./docker/shards/init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+  shard-1:
+    <<: *shard
+    container_name: booking_shard_1
+    ports:
+      - "5445:5432"
+    volumes:
+      - shard_1_data:/var/lib/postgresql/data
+      - ./docker/shards/init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+  shard-2:
+    <<: *shard
+    container_name: booking_shard_2
+    ports:
+      - "5446:5432"
+    volumes:
+      - shard_2_data:/var/lib/postgresql/data
+      - ./docker/shards/init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+  shard-3:
+    <<: *shard
+    container_name: booking_shard_3
+    ports:
+      - "5447:5432"
+    volumes:
+      - shard_3_data:/var/lib/postgresql/data
+      - ./docker/shards/init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+  backend:
+    build: .
+    image: booking-backend:latest
+    container_name: booking_backend
+    environment:
+      # в slim-образе без этого print() с кириллицей в скриптах лаб может падать
+      PYTHONIOENCODING: utf-8
+      # Запись и чтение, которому нужны свежие данные. Миграции — только сюда.
+      DATABASE_URL: postgresql://booking_user:booking_pass@postgres:5432/booking_db
+      # Лабораторная №4: отдельное подключение для чтения каталога и аналитики.
+      # Если реплика недоступна, такие запросы автоматически уходят на primary
+      # в read-only режиме — поэтому backend не ждёт готовности реплики.
+      REPLICA_DATABASE_URL: "postgresql://booking_user:booking_pass@postgres-replica:5432/booking_db,postgresql://booking_user:booking_pass@postgres-replica-2:5432/booking_db"
+      # Канал уведомлений для PartitionHealthCheck.
+      # Для реального VK / Max / корпоративной почты достаточно поменять эти
+      # переменные — код сервиса менять не нужно.
+      ALERT_SMTP_HOST: mailsink
+      ALERT_SMTP_PORT: "1025"
+      ALERT_EMAIL_FROM: partitions@booking.local
+      ALERT_EMAIL_TO: dba@booking.local
+      # Лабораторная №5: шарды.
+      # SHARDS — все известные шарды (имя=адрес). SHARD_ROUTER_NODES — какие из них
+      # включены в router; пусто — все. Стратегия: consistent | modulo.
+      SHARDS: "shard-0=postgresql://booking_user:booking_pass@shard-0:5432/booking_shard,shard-1=postgresql://booking_user:booking_pass@shard-1:5432/booking_shard,shard-2=postgresql://booking_user:booking_pass@shard-2:5432/booking_shard,shard-3=postgresql://booking_user:booking_pass@shard-3:5432/booking_shard"
+      SHARD_ROUTER_NODES: ""
+      SHARD_STRATEGY: consistent
+      SHARD_VNODES: "100"
+    volumes:
+      - ./mailbox:/app/mailbox
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailsink:
+        condition: service_started
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  postgres_data:
+  postgres_replica_data:
+  postgres_replica2_data:
+  shard_0_data:
+  shard_1_data:
+  shard_2_data:
+  shard_3_data:

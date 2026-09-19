@@ -1,0 +1,175 @@
+Pager usage is off.
+Timing is on.
+################ ЧАСТЬ 1. RANGE PARTITIONING по дате ################
+DROP SCHEMA
+Time: 1.471 ms
+psql:/tmp/lab03/a01_range_date.sql:6: NOTICE:  schema "lab3" does not exist, skipping
+CREATE SCHEMA
+Time: 2.783 ms
+CREATE TABLE
+Time: 6.759 ms
+CREATE TABLE
+Time: 10.099 ms
+CREATE TABLE
+Time: 8.214 ms
+CREATE TABLE
+Time: 5.621 ms
+--- заполняем 900 000 строк (по 300 000 на день) ---
+INSERT 0 900000
+Time: 1722.136 ms (00:01.722)
+Timing is off.
+VACUUM
+Timing is on.
+--- распределение по партициям ---
+     partition_name     | count  
+------------------------+--------
+ lab3.events_2026_09_09 | 300045
+ lab3.events_2026_09_10 | 300060
+ lab3.events_2026_09_11 | 299895
+(3 rows)
+
+Time: 52.859 ms
+
+--- ЗАДАНИЕ: куда попадут конкретные значения ---
+1) created_at = 2026-09-10 12:00:00
+INSERT 0 1
+Time: 1.734 ms
+       landed_in        
+------------------------
+ lab3.events_2026_09_10
+(1 row)
+
+Time: 25.807 ms
+2) created_at = 2026-09-11 00:00:00 (ровно граница)
+INSERT 0 1
+Time: 1.536 ms
+       landed_in        
+------------------------
+ lab3.events_2026_09_11
+(1 row)
+
+Time: 26.196 ms
+3) вставка за 2026-09-12 — партиции нет, ожидаем ошибку
+psql:/tmp/lab03/a01_range_date.sql:56: ERROR:  no partition of relation "events" found for row
+DETAIL:  Partition key of the failing row contains (created_at) = (2026-09-12 10:00:00).
+Time: 0.559 ms
+4) граница TO не включается: проверка полуинтервала
+ fits_09_11 | fits_09_12 
+------------+------------
+ t          | f
+(1 row)
+
+Time: 0.414 ms
+
+################ ЧАСТЬ 2. Partition pruning ################
+--- запрос ПО ключу партиционирования ---
+                                                                               QUERY PLAN                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=6893.88..6893.89 rows=1 width=8) (actual time=25.656..30.233 rows=1 loops=1)
+   Buffers: shared hit=2805
+   ->  Gather  (cost=6893.77..6893.88 rows=1 width=8) (actual time=25.497..30.226 rows=2 loops=1)
+         Workers Planned: 1
+         Workers Launched: 1
+         Buffers: shared hit=2805
+         ->  Partial Aggregate  (cost=5893.77..5893.78 rows=1 width=8) (actual time=23.679..23.680 rows=1 loops=2)
+               Buffers: shared hit=2805
+               ->  Parallel Seq Scan on events_2026_09_10 events  (cost=0.00..5452.59 rows=176471 width=0) (actual time=0.010..17.338 rows=150030 loops=2)
+                     Filter: ((created_at >= '2026-09-10 00:00:00'::timestamp without time zone) AND (created_at < '2026-09-11 00:00:00'::timestamp without time zone))
+                     Buffers: shared hit=2805
+ Planning:
+   Buffers: shared hit=22
+ Planning Time: 0.266 ms
+ Execution Time: 30.274 ms
+(15 rows)
+
+Time: 31.222 ms
+                                                                               QUERY PLAN                                                                               
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=6893.88..6893.89 rows=1 width=8) (actual time=25.555..30.020 rows=1 loops=1)
+   Buffers: shared hit=2805
+   ->  Gather  (cost=6893.77..6893.88 rows=1 width=8) (actual time=25.398..30.014 rows=2 loops=1)
+         Workers Planned: 1
+         Workers Launched: 1
+         Buffers: shared hit=2805
+         ->  Partial Aggregate  (cost=5893.77..5893.78 rows=1 width=8) (actual time=23.288..23.289 rows=1 loops=2)
+               Buffers: shared hit=2805
+               ->  Parallel Seq Scan on events_2026_09_10 events  (cost=0.00..5452.59 rows=176471 width=0) (actual time=0.013..16.977 rows=150030 loops=2)
+                     Filter: ((created_at >= '2026-09-10 00:00:00'::timestamp without time zone) AND (created_at < '2026-09-11 00:00:00'::timestamp without time zone))
+                     Buffers: shared hit=2805
+ Planning Time: 0.134 ms
+ Execution Time: 30.056 ms
+(13 rows)
+
+Time: 30.624 ms
+
+--- запрос БЕЗ ключа партиционирования ---
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=17011.07..17011.08 rows=1 width=8) (actual time=52.018..56.643 rows=1 loops=1)
+   Buffers: shared hit=8413
+   ->  Gather  (cost=17010.86..17011.07 rows=2 width=8) (actual time=51.781..56.624 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8413
+         ->  Partial Aggregate  (cost=16010.86..16010.87 rows=1 width=8) (actual time=48.431..48.433 rows=1 loops=3)
+               Buffers: shared hit=8413
+               ->  Parallel Append  (cost=0.00..15684.12 rows=130695 width=0) (actual time=0.010..42.703 rows=104985 loops=3)
+                     Buffers: shared hit=8413
+                     ->  Parallel Seq Scan on events_2026_09_10 events_2  (cost=0.00..5011.32 rows=61559 width=0) (actual time=0.005..13.676 rows=35154 loops=3)
+                           Filter: ((event_type)::text = 'click'::text)
+                           Rows Removed by Filter: 64866
+                           Buffers: shared hit=2805
+                     ->  Parallel Seq Scan on events_2026_09_09 events_1  (cost=0.00..5011.21 rows=61727 width=0) (actual time=0.008..28.933 rows=104818 loops=1)
+                           Filter: ((event_type)::text = 'click'::text)
+                           Rows Removed by Filter: 195227
+                           Buffers: shared hit=2805
+                     ->  Parallel Seq Scan on events_2026_09_11 events_3  (cost=0.00..5008.11 rows=61226 width=0) (actual time=0.009..18.530 rows=52338 loops=2)
+                           Filter: ((event_type)::text = 'click'::text)
+                           Rows Removed by Filter: 97610
+                           Buffers: shared hit=2803
+ Planning:
+   Buffers: shared hit=17
+ Planning Time: 0.176 ms
+ Execution Time: 56.683 ms
+(26 rows)
+
+Time: 59.222 ms
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=17011.07..17011.08 rows=1 width=8) (actual time=41.076..45.485 rows=1 loops=1)
+   Buffers: shared hit=8413
+   ->  Gather  (cost=17010.86..17011.07 rows=2 width=8) (actual time=40.943..45.476 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8413
+         ->  Partial Aggregate  (cost=16010.86..16010.87 rows=1 width=8) (actual time=37.939..37.941 rows=1 loops=3)
+               Buffers: shared hit=8413
+               ->  Parallel Append  (cost=0.00..15684.12 rows=130695 width=0) (actual time=0.009..33.666 rows=104985 loops=3)
+                     Buffers: shared hit=8413
+                     ->  Parallel Seq Scan on events_2026_09_10 events_2  (cost=0.00..5011.32 rows=61559 width=0) (actual time=0.005..9.647 rows=35154 loops=3)
+                           Filter: ((event_type)::text = 'click'::text)
+                           Rows Removed by Filter: 64866
+                           Buffers: shared hit=2805
+                     ->  Parallel Seq Scan on events_2026_09_09 events_1  (cost=0.00..5011.21 rows=61727 width=0) (actual time=0.005..13.951 rows=52409 loops=2)
+                           Filter: ((event_type)::text = 'click'::text)
+                           Rows Removed by Filter: 97614
+                           Buffers: shared hit=2805
+                     ->  Parallel Seq Scan on events_2026_09_11 events_3  (cost=0.00..5008.11 rows=61226 width=0) (actual time=0.013..26.647 rows=104675 loops=1)
+                           Filter: ((event_type)::text = 'click'::text)
+                           Rows Removed by Filter: 195221
+                           Buffers: shared hit=2803
+ Planning Time: 0.137 ms
+ Execution Time: 45.527 ms
+(24 rows)
+
+Time: 46.145 ms
+
+--- размеры партиций ---
+  partition_name   | size  | approx_rows 
+-------------------+-------+-------------
+ events_2026_09_09 | 22 MB |      300045
+ events_2026_09_10 | 22 MB |      300060
+ events_2026_09_11 | 22 MB |      299895
+(3 rows)
+
+Time: 5.347 ms

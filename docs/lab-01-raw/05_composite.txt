@@ -1,0 +1,265 @@
+Pager usage is off.
+################ ЗАДАНИЕ 11. Два отдельных индекса: user_id + status ################
+--- Индексы idx_orders_user_id и idx_orders_status уже созданы ---
+       indexname       
+-----------------------
+ idx_orders_amount
+ idx_orders_created_at
+ idx_orders_status
+ idx_orders_user_id
+ orders_pkey
+(5 rows)
+
+
+--- WHERE user_id = 123 AND status = 'PAID' (два отдельных индекса) ---
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4.51..47.62 rows=3 width=53) (actual time=0.336..0.337 rows=0 loops=1)
+   Recheck Cond: (user_id = 123)
+   Filter: ((status)::text = 'PAID'::text)
+   Rows Removed by Filter: 6
+   Heap Blocks: exact=6
+   Buffers: shared hit=12
+   ->  Bitmap Index Scan on idx_orders_user_id  (cost=0.00..4.51 rows=11 width=0) (actual time=0.042..0.042 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=6
+ Planning:
+   Buffers: shared hit=126
+ Planning Time: 0.597 ms
+ Execution Time: 0.382 ms
+(13 rows)
+
+
+--- Когда BitmapAnd действительно появляется: оба условия среднеселективны ---
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=2807.62..5054.64 rows=711 width=53) (actual time=10.738..15.664 rows=722 loops=1)
+   Recheck Cond: ((user_id >= 100) AND (user_id <= 400) AND ((status)::text = 'PAID'::text))
+   Heap Blocks: exact=699
+   Buffers: shared hit=918
+   ->  BitmapAnd  (cost=2807.62..2807.62 rows=711 width=0) (actual time=10.613..10.615 rows=0 loops=1)
+         Buffers: shared hit=219
+         ->  Bitmap Index Scan on idx_orders_user_id  (cost=0.00..44.59 rows=2817 width=0) (actual time=0.726..0.726 rows=2923 loops=1)
+               Index Cond: ((user_id >= 100) AND (user_id <= 400))
+               Buffers: shared hit=6
+         ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..2762.42 rows=252533 width=0) (actual time=9.548..9.548 rows=249807 loops=1)
+               Index Cond: ((status)::text = 'PAID'::text)
+               Buffers: shared hit=213
+ Planning:
+   Buffers: shared hit=19
+ Planning Time: 0.434 ms
+ Execution Time: 15.886 ms
+(16 rows)
+
+
+################ ЗАДАНИЕ 12. Составной индекс (user_id, status) ################
+CREATE INDEX
+ANALYZE
+ idx_orders_user_status_size 
+-----------------------------
+ 20 MB
+(1 row)
+
+
+--- WHERE user_id = 123 AND status = 'PAID' (составной индекс доступен) ---
+                                                           QUERY PLAN                                                            
+---------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_orders_user_status on orders  (cost=0.42..16.48 rows=3 width=53) (actual time=0.054..0.054 rows=0 loops=1)
+   Index Cond: ((user_id = 123) AND ((status)::text = 'PAID'::text))
+   Buffers: shared read=3
+ Planning:
+   Buffers: shared hit=25 read=1
+ Planning Time: 0.364 ms
+ Execution Time: 0.081 ms
+(7 rows)
+
+                                                           QUERY PLAN                                                            
+---------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_orders_user_status on orders  (cost=0.42..16.48 rows=3 width=53) (actual time=0.029..0.029 rows=0 loops=1)
+   Index Cond: ((user_id = 123) AND ((status)::text = 'PAID'::text))
+   Buffers: shared hit=3
+ Planning Time: 0.135 ms
+ Execution Time: 0.056 ms
+(5 rows)
+
+
+--- Тот же запрос с ЗАПРЕЩЁННЫМ составным индексом (для честного сравнения) ---
+BEGIN
+DROP INDEX
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4.51..47.62 rows=3 width=53) (actual time=0.037..0.038 rows=0 loops=1)
+   Recheck Cond: (user_id = 123)
+   Filter: ((status)::text = 'PAID'::text)
+   Rows Removed by Filter: 6
+   Heap Blocks: exact=6
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on idx_orders_user_id  (cost=0.00..4.51 rows=11 width=0) (actual time=0.015..0.015 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=7
+ Planning Time: 0.270 ms
+ Execution Time: 0.065 ms
+(13 rows)
+
+ROLLBACK
+
+--- BitmapAnd-запрос со составным индексом ---
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=72.27..2553.02 rows=799 width=53) (actual time=0.401..1.321 rows=722 loops=1)
+   Recheck Cond: ((user_id >= 100) AND (user_id <= 400) AND ((status)::text = 'PAID'::text))
+   Heap Blocks: exact=699
+   Buffers: shared hit=702 read=7
+   ->  Bitmap Index Scan on idx_orders_user_status  (cost=0.00..72.08 rows=799 width=0) (actual time=0.283..0.284 rows=722 loops=1)
+         Index Cond: ((user_id >= 100) AND (user_id <= 400) AND ((status)::text = 'PAID'::text))
+         Buffers: shared hit=3 read=7
+ Planning:
+   Buffers: shared hit=29 read=1
+ Planning Time: 0.397 ms
+ Execution Time: 1.383 ms
+(11 rows)
+
+
+################ ЗАДАНИЕ 13. Порядок колонок: (user_id, created_at) ################
+CREATE INDEX
+ANALYZE
+--- Запрос 1: WHERE user_id = 123 ---
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.062..0.074 rows=6 loops=1)
+   Recheck Cond: (user_id = 123)
+   Heap Blocks: exact=6
+   Buffers: shared hit=6 read=3
+   ->  Bitmap Index Scan on idx_orders_user_created_at  (cost=0.00..4.51 rows=11 width=0) (actual time=0.054..0.054 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared read=3
+ Planning:
+   Buffers: shared hit=25 read=1
+ Planning Time: 0.371 ms
+ Execution Time: 0.102 ms
+(11 rows)
+
+--- Запрос 2: WHERE user_id = 123 AND created_at > NOW() - 30 days ---
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_orders_user_created_at on orders  (cost=0.43..8.45 rows=1 width=53) (actual time=0.037..0.038 rows=0 loops=1)
+   Index Cond: ((user_id = 123) AND (created_at > (now() - '30 days'::interval)))
+   Buffers: shared hit=6
+ Planning:
+   Buffers: shared hit=3
+ Planning Time: 0.185 ms
+ Execution Time: 0.060 ms
+(7 rows)
+
+--- Запрос 3: WHERE created_at > NOW() - 30 days ---
+                                                               QUERY PLAN                                                               
+----------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=810.98..12393.42 rows=43168 width=53) (actual time=10.476..29.497 rows=42005 loops=1)
+   Recheck Cond: (created_at > (now() - '30 days'::interval))
+   Heap Blocks: exact=10641
+   Buffers: shared hit=10759
+   ->  Bitmap Index Scan on idx_orders_created_at  (cost=0.00..800.19 rows=43168 width=0) (actual time=7.721..7.721 rows=42005 loops=1)
+         Index Cond: (created_at > (now() - '30 days'::interval))
+         Buffers: shared hit=118
+ Planning Time: 0.146 ms
+ Execution Time: 31.695 ms
+(9 rows)
+
+
+--- Проверка «левого префикса»: только по created_at, все прочие индексы по created_at скрыты ---
+BEGIN
+DROP INDEX
+SET
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=22923.22..34505.66 rows=43168 width=53) (actual time=156.521..176.920 rows=42005 loops=1)
+   Recheck Cond: (created_at > (now() - '30 days'::interval))
+   Heap Blocks: exact=10641
+   Buffers: shared hit=10644 read=3831 written=1527
+   ->  Bitmap Index Scan on idx_orders_user_created_at  (cost=0.00..22912.43 rows=43168 width=0) (actual time=154.332..154.332 rows=42005 loops=1)
+         Index Cond: (created_at > (now() - '30 days'::interval))
+         Buffers: shared hit=3 read=3831 written=1527
+ Planning:
+   Buffers: shared hit=7
+ Planning Time: 0.180 ms
+ Execution Time: 179.163 ms
+(11 rows)
+
+ROLLBACK
+
+################ ЗАДАНИЕ 13. Обратный порядок: (created_at, user_id) ################
+CREATE INDEX
+ANALYZE
+         indexname          |  size   
+----------------------------+---------
+ idx_orders_amount          | 21 MB
+ idx_orders_created_at      | 21 MB
+ idx_orders_created_at_user | 30 MB
+ idx_orders_status          | 6848 kB
+ idx_orders_user_created_at | 30 MB
+ idx_orders_user_id         | 9088 kB
+ idx_orders_user_status     | 20 MB
+ orders_pkey                | 21 MB
+(8 rows)
+
+--- Запрос 1: WHERE user_id = 123 ---
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.025..0.039 rows=6 loops=1)
+   Recheck Cond: (user_id = 123)
+   Heap Blocks: exact=6
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on idx_orders_user_created_at  (cost=0.00..4.51 rows=11 width=0) (actual time=0.017..0.018 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=23 read=2
+ Planning Time: 0.338 ms
+ Execution Time: 0.071 ms
+(11 rows)
+
+--- Запрос 2: WHERE user_id = 123 AND created_at > NOW() - 30 days ---
+                                                             QUERY PLAN                                                             
+------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_orders_user_created_at on orders  (cost=0.43..8.45 rows=1 width=53) (actual time=0.024..0.024 rows=0 loops=1)
+   Index Cond: ((user_id = 123) AND (created_at > (now() - '30 days'::interval)))
+   Buffers: shared hit=3
+ Planning Time: 0.181 ms
+ Execution Time: 0.046 ms
+(5 rows)
+
+--- Запрос 3: WHERE created_at > NOW() - 30 days ---
+                                                               QUERY PLAN                                                               
+----------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=722.81..12223.58 rows=38501 width=53) (actual time=12.639..39.165 rows=42005 loops=1)
+   Recheck Cond: (created_at > (now() - '30 days'::interval))
+   Heap Blocks: exact=10641
+   Buffers: shared hit=10759
+   ->  Bitmap Index Scan on idx_orders_created_at  (cost=0.00..713.19 rows=38501 width=0) (actual time=9.907..9.908 rows=42005 loops=1)
+         Index Cond: (created_at > (now() - '30 days'::interval))
+         Buffers: shared hit=118
+ Planning Time: 0.180 ms
+ Execution Time: 41.794 ms
+(9 rows)
+
+
+--- Запрос 2 принудительно через (created_at, user_id) ---
+BEGIN
+DROP INDEX
+DROP INDEX
+DROP INDEX
+SET
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_orders_created_at_user on orders  (cost=0.43..985.45 rows=1 width=53) (actual time=5.700..5.701 rows=0 loops=1)
+   Index Cond: ((created_at > (now() - '30 days'::interval)) AND (user_id = 123))
+   Buffers: shared read=164
+ Planning:
+   Buffers: shared hit=7
+ Planning Time: 0.224 ms
+ Execution Time: 5.730 ms
+(7 rows)
+
+ROLLBACK

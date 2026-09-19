@@ -1,0 +1,221 @@
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 0. Исходное состояние
+────────────────────────────────────────────────────────────────────────────
+{
+    "tables": [
+        {
+            "schema_name": "lab3",
+            "table_name": "events",
+            "step": "day",
+            "horizon": 3,
+            "partitions": 7,
+            "status": null,
+            "missing_list": null,
+            "last_checked_at": null,
+            "changed_at": null
+        },
+        {
+            "schema_name": "public",
+            "table_name": "bookings",
+            "step": "month",
+            "horizon": 3,
+            "partitions": 17,
+            "status": null,
+            "missing_list": null,
+            "last_checked_at": null,
+            "changed_at": null
+        }
+    ]
+}
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 1. Проверка здоровья — ожидаем OK
+────────────────────────────────────────────────────────────────────────────
+{
+    "status": "OK",
+    "checks": [
+        {
+            "table_full_name": "lab3.events",
+            "check_status": "OK",
+            "missing": [],
+            "notified": false
+        },
+        {
+            "table_full_name": "public.bookings",
+            "check_status": "OK",
+            "missing": [],
+            "notified": false
+        }
+    ]
+}
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 2. Ломаем: удаляем последнюю партицию горизонта у lab3.events
+────────────────────────────────────────────────────────────────────────────
+NOTICE:  удалена lab3.events_2026_09_16
+DO
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 3. Проверка здоровья — ожидаем CRITICAL
+────────────────────────────────────────────────────────────────────────────
+{
+    "status": "CRITICAL",
+    "checks": [
+        {
+            "table_full_name": "lab3.events",
+            "check_status": "CRITICAL",
+            "missing": [
+                "events_2026_09_16"
+            ],
+            "notified": true
+        },
+        {
+            "table_full_name": "public.bookings",
+            "check_status": "OK",
+            "missing": [],
+            "notified": false
+        }
+    ]
+}
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 4. Отправка уведомления
+────────────────────────────────────────────────────────────────────────────
+{
+    "pending": 1,
+    "sent": 1,
+    "failed": 0,
+    "channel": "smtp://mailsink:1025",
+    "recipient": "dba@booking.local"
+}
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 5. Письмо, пришедшее на SMTP-приёмник
+────────────────────────────────────────────────────────────────────────────
+[smtp-sink] слушаю 0.0.0.0:1025, письма в /app/mailbox
+========================================================================
+ПОЛУЧЕНО ПИСЬМО   2026-09-13 15:02:40
+From:    partitions@booking.local
+To:      dba@booking.local
+Subject: [CRITICAL] Partition alert: lab3.events
+Файл:    /app/mailbox/20260913-150240-576076.eml
+------------------------------------------------------------------------
+🔴 Partition alert
+
+Table: lab3.events
+
+Missing partitions:
+events_2026_09_16
+
+Expected horizon: 3 day
+
+Checked at:
+2026-09-13 15:02:40
+========================================================================
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 6. Дедупликация: три проверки подряд не создают новых алертов
+────────────────────────────────────────────────────────────────────────────
+ severity |                 subject                 | sent 
+----------+-----------------------------------------+------
+ CRITICAL | [CRITICAL] Partition alert: lab3.events | t
+(1 row)
+
+ config_id |  status  | check_count 
+-----------+----------+-------------
+         1 | CRITICAL |           5
+         3 | OK       |           5
+(2 rows)
+
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 7. Восстановление: CreatePartitionsJob
+────────────────────────────────────────────────────────────────────────────
+{
+    "log": [
+        "2026-09-13 15:02  Partition job started. Table: lab3.events",
+        "Existing partitions: 6",
+        "Required partitions: 4 (horizon 3 day)",
+        "Creating: events_2026_09_16  [2026-09-16 .. 2026-09-17)",
+        "Missing partitions: 1",
+        "Partition created successfully.",
+        "Partition job finished.",
+        "",
+        "2026-09-13 15:02  Partition job started. Table: public.bookings",
+        "Existing partitions: 17",
+        "Required partitions: 4 (horizon 3 month)",
+        "Missing partitions: 0",
+        "Nothing to create \u2014 all required partitions already exist.",
+        "Partition job finished.",
+        ""
+    ]
+}
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 8. Проверка здоровья — снова OK, ставится recovery
+────────────────────────────────────────────────────────────────────────────
+{
+    "status": "OK",
+    "checks": [
+        {
+            "table_full_name": "lab3.events",
+            "check_status": "OK",
+            "missing": [],
+            "notified": true
+        },
+        {
+            "table_full_name": "public.bookings",
+            "check_status": "OK",
+            "missing": [],
+            "notified": false
+        }
+    ]
+}
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 9. Отправка recovery-уведомления
+────────────────────────────────────────────────────────────────────────────
+{
+    "pending": 1,
+    "sent": 1,
+    "failed": 0,
+    "channel": "smtp://mailsink:1025",
+    "recipient": "dba@booking.local"
+}
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 10. Recovery-письмо
+────────────────────────────────────────────────────────────────────────────
+
+Checked at:
+2026-09-13 15:02:40
+========================================================================
+========================================================================
+ПОЛУЧЕНО ПИСЬМО   2026-09-13 15:02:43
+From:    partitions@booking.local
+To:      dba@booking.local
+Subject: [RECOVERY] Partition check OK: lab3.events
+Файл:    /app/mailbox/20260913-150243-171592.eml
+------------------------------------------------------------------------
+🟢 Partition check OK
+
+Table: lab3.events
+
+All required partitions exist.
+
+Expected horizon: 3 day
+
+Checked at:
+2026-09-13 15:02:42
+========================================================================
+
+────────────────────────────────────────────────────────────────────────────
+  ШАГ 11. Итоговая история уведомлений
+────────────────────────────────────────────────────────────────────────────
+ id | severity |                  subject                   | sent | send_attempts 
+----+----------+--------------------------------------------+------+---------------
+  1 | CRITICAL | [CRITICAL] Partition alert: lab3.events    | t    |             1
+  2 | RECOVERY | [RECOVERY] Partition check OK: lab3.events | t    |             1
+(2 rows)
+

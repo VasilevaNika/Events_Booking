@@ -1,0 +1,161 @@
+Pager usage is off.
+################ ЗАДАНИЕ 6. Создание B-tree индекса по user_id ################
+CREATE INDEX
+ANALYZE
+
+--- Размер индекса ---
+ idx_orders_user_id_size | orders_heap_size 
+-------------------------+------------------
+ 9088 kB                 | 85 MB
+(1 row)
+
+
+--- ЗАДАНИЕ 6. EXPLAIN ANALYZE ПОСЛЕ индекса (прогон 1) ---
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.076..0.086 rows=6 loops=1)
+   Recheck Cond: (user_id = 123)
+   Heap Blocks: exact=6
+   Buffers: shared hit=9 read=3
+   ->  Bitmap Index Scan on idx_orders_user_id  (cost=0.00..4.51 rows=11 width=0) (actual time=0.071..0.071 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=3 read=3
+ Planning:
+   Buffers: shared hit=37 read=1
+ Planning Time: 0.370 ms
+ Execution Time: 0.121 ms
+(11 rows)
+
+--- ЗАДАНИЕ 6. EXPLAIN ANALYZE ПОСЛЕ индекса (прогон 2, тёплый) ---
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.020..0.029 rows=6 loops=1)
+   Recheck Cond: (user_id = 123)
+   Heap Blocks: exact=6
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on idx_orders_user_id  (cost=0.00..4.51 rows=11 width=0) (actual time=0.015..0.015 rows=6 loops=1)
+         Index Cond: (user_id = 123)
+         Buffers: shared hit=3
+ Planning Time: 0.068 ms
+ Execution Time: 0.046 ms
+(9 rows)
+
+
+################ ЗАДАНИЕ 8. Распределение значений status ################
+  status   |  rows  | pct_of_table 
+-----------+--------+--------------
+ NEW       | 250663 |        25.07
+ DELIVERED | 250037 |        25.00
+ PAID      | 249807 |        24.98
+ CANCELLED | 249493 |        24.95
+(4 rows)
+
+
+--- Селективность колонок (n_distinct из статистики) ---
+  attname   | n_distinct |  correlation  
+------------+------------+---------------
+ amount     |  -0.507088 |   0.009819947
+ created_at |  -0.997816 |  -0.004294317
+ id         |         -1 |             1
+ product_id |       9969 | -0.0019346263
+ status     |          4 |     0.2446014
+ updated_at |          1 |             1
+ user_id    |      91762 |   0.004492387
+(7 rows)
+
+
+################ ЗАДАНИЕ 7. Индекс по низкоселективной колонке status ################
+CREATE INDEX
+ANALYZE
+ idx_orders_status_size 
+------------------------
+ 6848 kB
+(1 row)
+
+
+--- WHERE status = 'PAID' ---
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=2753.25..16659.00 rows=246300 width=53) (actual time=7.274..44.427 rows=249807 loops=1)
+   Recheck Cond: ((status)::text = 'PAID'::text)
+   Heap Blocks: exact=10827
+   Buffers: shared hit=10827 read=213
+   ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..2691.68 rows=246300 width=0) (actual time=6.008..6.008 rows=249807 loops=1)
+         Index Cond: ((status)::text = 'PAID'::text)
+         Buffers: shared read=213
+ Planning:
+   Buffers: shared hit=23 read=1
+ Planning Time: 0.195 ms
+ Execution Time: 51.605 ms
+(11 rows)
+
+--- WHERE status = 'NEW' ---
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=2870.11..16906.27 rows=256733 width=53) (actual time=7.426..43.998 rows=250663 loops=1)
+   Recheck Cond: ((status)::text = 'NEW'::text)
+   Heap Blocks: exact=10827
+   Buffers: shared hit=10829 read=212
+   ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..2805.92 rows=256733 width=0) (actual time=6.238..6.239 rows=250663 loops=1)
+         Index Cond: ((status)::text = 'NEW'::text)
+         Buffers: shared hit=2 read=212
+ Planning Time: 0.109 ms
+ Execution Time: 51.074 ms
+(9 rows)
+
+--- WHERE status = 'DELIVERED' ---
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=2786.43..16726.34 rows=249033 width=53) (actual time=8.467..46.413 rows=250037 loops=1)
+   Recheck Cond: ((status)::text = 'DELIVERED'::text)
+   Heap Blocks: exact=10827
+   Buffers: shared hit=10829 read=215
+   ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..2724.17 rows=249033 width=0) (actual time=7.190..7.191 rows=250037 loops=1)
+         Index Cond: ((status)::text = 'DELIVERED'::text)
+         Buffers: shared hit=2 read=215
+ Planning Time: 0.132 ms
+ Execution Time: 53.676 ms
+(9 rows)
+
+--- WHERE status = 'CANCELLED' ---
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=2773.91..16700.07 rows=247933 width=53) (actual time=7.930..44.945 rows=249493 loops=1)
+   Recheck Cond: ((status)::text = 'CANCELLED'::text)
+   Heap Blocks: exact=10827
+   Buffers: shared hit=10829 read=214
+   ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..2711.92 rows=247933 width=0) (actual time=6.726..6.726 rows=249493 loops=1)
+         Index Cond: ((status)::text = 'CANCELLED'::text)
+         Buffers: shared hit=2 read=214
+ Planning Time: 0.094 ms
+ Execution Time: 52.171 ms
+(9 rows)
+
+
+--- Доказательство: тот же запрос при принудительно отключённом Seq Scan ---
+SET
+                                                              QUERY PLAN                                                               
+---------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=2753.25..16659.00 rows=246300 width=53) (actual time=6.239..45.477 rows=249807 loops=1)
+   Recheck Cond: ((status)::text = 'PAID'::text)
+   Heap Blocks: exact=10827
+   Buffers: shared hit=11040
+   ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..2691.68 rows=246300 width=0) (actual time=5.056..5.056 rows=249807 loops=1)
+         Index Cond: ((status)::text = 'PAID'::text)
+         Buffers: shared hit=213
+ Planning Time: 0.105 ms
+ Execution Time: 53.154 ms
+(9 rows)
+
+SET
+
+--- Контрпример: высокоселективное условие по той же таблице (COUNT(*) = 1) ---
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Index Scan using orders_pkey on orders  (cost=0.42..8.44 rows=1 width=53) (actual time=0.028..0.030 rows=1 loops=1)
+   Index Cond: (id = 500000)
+   Buffers: shared hit=4
+ Planning Time: 0.099 ms
+ Execution Time: 0.050 ms
+(5 rows)
+

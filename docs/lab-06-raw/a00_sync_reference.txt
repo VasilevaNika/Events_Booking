@@ -1,0 +1,6 @@
+shard-0: venues: 200 строк, 48 kB; events: 2 000 строк, 360 kB
+shard-1: venues: 200 строк, 48 kB; events: 2 000 строк, 360 kB
+shard-2: venues: 200 строк, 48 kB; events: 2 000 строк, 360 kB
+shard-3: venues: 200 строк, 48 kB; events: 2 000 строк, 360 kB
+
+копии справочников обновлены на всех шардах за 459 мс

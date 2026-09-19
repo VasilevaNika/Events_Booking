@@ -1,0 +1,115 @@
+Pager usage is off.
+Timing is on.
+
+################################################################
+####  КОНТРОЛЬНАЯ ТОЧКА: добавляем :add строк                ####
+################################################################
+--- ЗАДАНИЕ 2: генерация данных ---
+INSERT 0 10000
+Time: 107.796 ms
+Timing is off.
+VACUUM
+Timing is on.
+
+--- ЗАДАНИЕ 3: размер таблицы ---
+ rows_total 
+------------
+      10000
+(1 row)
+
+Time: 1.673 ms
+ table_size | total_size 
+------------+------------
+ 672 kB     | 952 kB
+(1 row)
+
+Time: 3.148 ms
+ heap_pages 
+------------
+         84
+(1 row)
+
+Time: 1.253 ms
+ rows_for_user_123 
+-------------------
+                 0
+(1 row)
+
+Time: 1.720 ms
+
+--- ЗАДАНИЕ 4: SELECT БЕЗ дополнительного индекса (прогон 1) ---
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Seq Scan on events  (cost=0.00..209.00 rows=1 width=36) (actual time=1.541..1.541 rows=0 loops=1)
+   Filter: (user_id = 123)
+   Rows Removed by Filter: 10000
+   Buffers: shared hit=84
+ Planning:
+   Buffers: shared hit=9
+ Planning Time: 0.168 ms
+ Execution Time: 1.565 ms
+(8 rows)
+
+Time: 2.528 ms
+--- ЗАДАНИЕ 4: прогон 2 (в отчёт) ---
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Seq Scan on events  (cost=0.00..209.00 rows=1 width=36) (actual time=1.040..1.041 rows=0 loops=1)
+   Filter: (user_id = 123)
+   Rows Removed by Filter: 10000
+   Buffers: shared hit=84
+ Planning Time: 0.080 ms
+ Execution Time: 1.057 ms
+(6 rows)
+
+Time: 1.585 ms
+
+--- ЗАДАНИЕ 5: создаём индекс ---
+CREATE INDEX
+Time: 21.307 ms
+Timing is off.
+VACUUM
+Timing is on.
+--- ЗАДАНИЕ 5: SELECT С индексом (прогон 1) ---
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_events_user_id on events  (cost=0.29..8.30 rows=1 width=36) (actual time=0.083..0.083 rows=0 loops=1)
+   Index Cond: (user_id = 123)
+   Buffers: shared hit=3 read=2
+ Planning:
+   Buffers: shared hit=18
+ Planning Time: 0.155 ms
+ Execution Time: 0.103 ms
+(7 rows)
+
+Time: 0.688 ms
+--- ЗАДАНИЕ 5: прогон 2 (в отчёт) ---
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_events_user_id on events  (cost=0.29..8.30 rows=1 width=36) (actual time=0.022..0.022 rows=0 loops=1)
+   Index Cond: (user_id = 123)
+   Buffers: shared hit=2
+ Planning Time: 0.109 ms
+ Execution Time: 0.049 ms
+(5 rows)
+
+Time: 0.609 ms
+
+--- ЗАДАНИЕ 10 (частично): размер индекса на этом объёме ---
+     index_name     | index_size 
+--------------------+------------
+ events_pkey        | 240 kB
+ idx_events_user_id | 240 kB
+(2 rows)
+
+Time: 6.640 ms
+ total_with_index 
+------------------
+ 1192 kB
+(1 row)
+
+Time: 0.786 ms
+
+--- убираем индекс перед следующей загрузкой ---
+DROP INDEX
+Time: 5.229 ms

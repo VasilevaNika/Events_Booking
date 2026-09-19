@@ -1,0 +1,382 @@
+Pager usage is off.
+Timing is on.
+################ ЧАСТЬ 12. Партиционирование своего сервиса ################
+--- структура партиционированной таблицы ---
+  partition_name  |                                  bounds                                  |  heap   | total | approx_rows 
+------------------+--------------------------------------------------------------------------+---------+-------+-------------
+ bookings_2025_09 | FOR VALUES FROM ('2025-09-01 00:00:00+00') TO ('2025-10-01 00:00:00+00') | 19 MB   | 52 MB |      266486
+ bookings_2025_10 | FOR VALUES FROM ('2025-10-01 00:00:00+00') TO ('2025-11-01 00:00:00+00') | 30 MB   | 83 MB |      425000
+ bookings_2025_11 | FOR VALUES FROM ('2025-11-01 00:00:00+00') TO ('2025-12-01 00:00:00+00') | 29 MB   | 81 MB |      411213
+ bookings_2025_12 | FOR VALUES FROM ('2025-12-01 00:00:00+00') TO ('2026-01-01 00:00:00+00') | 30 MB   | 83 MB |      423948
+ bookings_2026_01 | FOR VALUES FROM ('2026-01-01 00:00:00+00') TO ('2026-02-01 00:00:00+00') | 30 MB   | 83 MB |      424485
+ bookings_2026_02 | FOR VALUES FROM ('2026-02-01 00:00:00+00') TO ('2026-03-01 00:00:00+00') | 27 MB   | 76 MB |      384942
+ bookings_2026_03 | FOR VALUES FROM ('2026-03-01 00:00:00+00') TO ('2026-04-01 00:00:00+00') | 30 MB   | 83 MB |      424668
+ bookings_2026_04 | FOR VALUES FROM ('2026-04-01 00:00:00+00') TO ('2026-05-01 00:00:00+00') | 29 MB   | 81 MB |      411138
+ bookings_2026_05 | FOR VALUES FROM ('2026-05-01 00:00:00+00') TO ('2026-06-01 00:00:00+00') | 30 MB   | 83 MB |      424860
+ bookings_2026_06 | FOR VALUES FROM ('2026-06-01 00:00:00+00') TO ('2026-07-01 00:00:00+00') | 29 MB   | 81 MB |      410860
+ bookings_2026_07 | FOR VALUES FROM ('2026-07-01 00:00:00+00') TO ('2026-08-01 00:00:00+00') | 30 MB   | 83 MB |      423305
+ bookings_2026_08 | FOR VALUES FROM ('2026-08-01 00:00:00+00') TO ('2026-09-01 00:00:00+00') | 30 MB   | 83 MB |      424340
+ bookings_2026_09 | FOR VALUES FROM ('2026-09-01 00:00:00+00') TO ('2026-10-01 00:00:00+00') | 10 MB   | 28 MB |      144755
+ bookings_2026_10 | FOR VALUES FROM ('2026-10-01 00:00:00+00') TO ('2026-11-01 00:00:00+00') | 0 bytes | 40 kB |           0
+ bookings_2026_11 | FOR VALUES FROM ('2026-11-01 00:00:00+00') TO ('2026-12-01 00:00:00+00') | 0 bytes | 40 kB |           0
+ bookings_2026_12 | FOR VALUES FROM ('2026-12-01 00:00:00+00') TO ('2027-01-01 00:00:00+00') | 0 bytes | 40 kB |           0
+ bookings_default | DEFAULT                                                                  | 0 bytes | 40 kB |           0
+(17 rows)
+
+Time: 18.288 ms
+--- реальное распределение строк ---
+  partition_name  | count  
+------------------+--------
+ bookings_2025_09 | 266486
+ bookings_2025_10 | 425000
+ bookings_2025_11 | 411213
+ bookings_2025_12 | 423948
+ bookings_2026_01 | 424485
+ bookings_2026_02 | 384942
+ bookings_2026_03 | 424668
+ bookings_2026_04 | 411138
+ bookings_2026_05 | 424860
+ bookings_2026_06 | 410860
+ bookings_2026_07 | 423305
+ bookings_2026_08 | 424340
+ bookings_2026_09 | 144755
+(13 rows)
+
+Time: 453.969 ms
+--- суммарный размер ---
+ heap_total | with_indexes | partitions 
+------------+--------------+------------
+ 355 MB     | 981 MB       |         17
+(1 row)
+
+Time: 2.863 ms
+
+=== ЗАПРОС 1: диапазон дат (GET /api/bookings?from_date=&to_date=) ===
+    ключ партиционирования в WHERE есть → ожидаем pruning
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Append  (cost=0.43..6122.08 rows=144771 width=41) (actual time=0.015..91.420 rows=144755 loops=1)
+   Buffers: shared hit=2 read=1314
+   Subplans Removed: 16
+   ->  Seq Scan on bookings_2026_09 b_1  (cost=0.00..5296.76 rows=144755 width=41) (actual time=0.015..82.339 rows=144755 loops=1)
+         Filter: ((created_at >= date_trunc('month'::text, now())) AND (created_at < (date_trunc('month'::text, now()) + '1 mon'::interval)))
+         Buffers: shared hit=2 read=1314
+ Planning:
+   Buffers: shared hit=391 read=88 dirtied=8
+ Planning Time: 3.991 ms
+ Execution Time: 96.429 ms
+(10 rows)
+
+Time: 102.585 ms
+                                                                  QUERY PLAN                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ Append  (cost=0.43..6122.08 rows=144771 width=41) (actual time=0.010..86.535 rows=144755 loops=1)
+   Buffers: shared hit=1316
+   Subplans Removed: 16
+   ->  Seq Scan on bookings_2026_09 b_1  (cost=0.00..5296.76 rows=144755 width=41) (actual time=0.010..76.883 rows=144755 loops=1)
+         Filter: ((created_at >= date_trunc('month'::text, now())) AND (created_at < (date_trunc('month'::text, now()) + '1 mon'::interval)))
+         Buffers: shared hit=1316
+ Planning:
+   Buffers: shared hit=124
+ Planning Time: 1.263 ms
+ Execution Time: 91.598 ms
+(10 rows)
+
+Time: 93.658 ms
+
+=== ЗАПРОС 2: COUNT(*) за месяц (пагинация того же эндпоинта) ===
+                                                                           QUERY PLAN                                                                           
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=5211.72..5211.73 rows=1 width=8) (actual time=35.384..38.930 rows=1 loops=1)
+   Buffers: shared hit=1316
+   ->  Gather  (cost=5211.50..5211.71 rows=2 width=8) (actual time=35.242..38.923 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=1316
+         ->  Partial Aggregate  (cost=4211.50..4211.51 rows=1 width=8) (actual time=29.300..29.301 rows=1 loops=3)
+               Buffers: shared hit=1316
+               ->  Parallel Append  (cost=0.00..4060.68 rows=60331 width=0) (actual time=0.012..27.083 rows=48252 loops=3)
+                     Buffers: shared hit=1316
+                     Subplans Removed: 16
+                     ->  Parallel Seq Scan on bookings_2026_09 b_1  (cost=0.00..3657.63 rows=85150 width=0) (actual time=0.011..24.050 rows=48252 loops=3)
+                           Filter: ((created_at >= date_trunc('month'::text, now())) AND (created_at < (date_trunc('month'::text, now()) + '1 mon'::interval)))
+                           Buffers: shared hit=1316
+ Planning:
+   Buffers: shared hit=124
+ Planning Time: 1.296 ms
+ Execution Time: 38.970 ms
+(18 rows)
+
+Time: 40.906 ms
+
+=== ЗАПРОС 3: бронирования пользователя (GET /api/users/{id}/bookings) ===
+    ключа партиционирования в WHERE НЕТ → pruning не сработает
+                                                                                 QUERY PLAN                                                                                  
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=6.34..238.84 rows=50 width=43) (actual time=0.586..0.819 rows=50 loops=1)
+   Buffers: shared hit=33 read=66
+   ->  Merge Append  (cost=6.34..527.14 rows=112 width=43) (actual time=0.585..0.814 rows=50 loops=1)
+         Sort Key: b.created_at DESC
+         Buffers: shared hit=33 read=66
+         ->  Index Scan using bookings_2025_09_user_id_created_at_idx on bookings_2025_09 b_1  (cost=0.42..28.53 rows=6 width=41) (actual time=0.083..0.083 rows=1 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared read=4
+         ->  Index Scan using bookings_2025_10_user_id_created_at_idx on bookings_2025_10 b_2  (cost=0.42..40.58 rows=9 width=41) (actual time=0.028..0.028 rows=1 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared read=4
+         ->  Index Scan using bookings_2025_11_user_id_created_at_idx on bookings_2025_11 b_3  (cost=0.42..40.58 rows=9 width=41) (actual time=0.070..0.070 rows=1 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared hit=1 read=3
+         ->  Index Scan using bookings_2025_12_user_id_created_at_idx on bookings_2025_12 b_4  (cost=0.42..40.58 rows=9 width=41) (actual time=0.039..0.039 rows=1 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared hit=1 read=3
+         ->  Index Scan using bookings_2026_01_user_id_created_at_idx on bookings_2026_01 b_5  (cost=0.42..40.58 rows=9 width=41) (actual time=0.025..0.025 rows=1 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared read=4
+         ->  Index Scan using bookings_2026_02_user_id_created_at_idx on bookings_2026_02 b_6  (cost=0.42..36.56 rows=8 width=41) (actual time=0.049..0.049 rows=1 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared read=4
+         ->  Index Scan using bookings_2026_03_user_id_created_at_idx on bookings_2026_03 b_7  (cost=0.42..40.58 rows=9 width=41) (actual time=0.028..0.064 rows=8 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared read=11
+         ->  Index Scan using bookings_2026_04_user_id_created_at_idx on bookings_2026_04 b_8  (cost=0.42..40.58 rows=9 width=41) (actual time=0.021..0.070 rows=12 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared hit=10 read=5
+         ->  Index Scan using bookings_2026_05_user_id_created_at_idx on bookings_2026_05 b_9  (cost=0.42..40.58 rows=9 width=41) (actual time=0.045..0.090 rows=6 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared read=9
+         ->  Index Scan using bookings_2026_06_user_id_created_at_idx on bookings_2026_06 b_10  (cost=0.42..40.58 rows=9 width=41) (actual time=0.063..0.076 rows=4 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared read=7
+         ->  Index Scan using bookings_2026_07_user_id_created_at_idx on bookings_2026_07 b_11  (cost=0.42..40.58 rows=9 width=41) (actual time=0.023..0.036 rows=8 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared hit=8 read=3
+         ->  Index Scan using bookings_2026_08_user_id_created_at_idx on bookings_2026_08 b_12  (cost=0.42..40.58 rows=9 width=41) (actual time=0.022..0.079 rows=7 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared hit=4 read=6
+         ->  Index Scan using bookings_2026_09_user_id_created_at_idx on bookings_2026_09 b_13  (cost=0.42..20.49 rows=4 width=41) (actual time=0.048..0.054 rows=5 loops=1)
+               Index Cond: (user_id = 1)
+               Buffers: shared hit=5 read=3
+         ->  Index Scan Backward using bookings_2026_10_created_at_idx on bookings_2026_10 b_14  (cost=0.12..8.14 rows=1 width=90) (actual time=0.014..0.014 rows=0 loops=1)
+               Filter: (user_id = 1)
+               Buffers: shared hit=1
+         ->  Index Scan Backward using bookings_2026_11_created_at_idx on bookings_2026_11 b_15  (cost=0.12..8.14 rows=1 width=90) (actual time=0.011..0.011 rows=0 loops=1)
+               Filter: (user_id = 1)
+               Buffers: shared hit=1
+         ->  Index Scan Backward using bookings_2026_12_created_at_idx on bookings_2026_12 b_16  (cost=0.12..8.14 rows=1 width=90) (actual time=0.005..0.005 rows=0 loops=1)
+               Filter: (user_id = 1)
+               Buffers: shared hit=1
+         ->  Index Scan Backward using bookings_default_created_at_idx on bookings_default b_17  (cost=0.12..8.14 rows=1 width=90) (actual time=0.006..0.006 rows=0 loops=1)
+               Filter: (user_id = 1)
+               Buffers: shared hit=1
+ Planning:
+   Buffers: shared hit=25
+ Planning Time: 0.780 ms
+ Execution Time: 0.974 ms
+(60 rows)
+
+Time: 3.109 ms
+
+=== ЗАПРОС 3-БИС: тот же запрос, но с ограничением по дате ===
+    так делает исправленный эндпоинт — pruning включается
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=199.99..200.09 rows=40 width=46) (actual time=0.245..0.250 rows=22 loops=1)
+   Buffers: shared hit=34
+   ->  Sort  (cost=199.99..200.09 rows=40 width=46) (actual time=0.244..0.247 rows=22 loops=1)
+         Sort Key: b.created_at DESC
+         Sort Method: quicksort  Memory: 26kB
+         Buffers: shared hit=34
+         ->  Append  (cost=0.43..198.93 rows=40 width=46) (actual time=0.027..0.162 rows=22 loops=1)
+               Buffers: shared hit=34
+               Subplans Removed: 9
+               ->  Bitmap Heap Scan on bookings_2026_06 b_1  (cost=4.48..24.03 rows=5 width=41) (actual time=0.026..0.028 rows=2 loops=1)
+                     Recheck Cond: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+                     Heap Blocks: exact=2
+                     Buffers: shared hit=5
+                     ->  Bitmap Index Scan on bookings_2026_06_user_id_created_at_idx  (cost=0.00..4.48 rows=5 width=0) (actual time=0.020..0.020 rows=2 loops=1)
+                           Index Cond: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+                           Buffers: shared hit=3
+               ->  Bitmap Heap Scan on bookings_2026_07 b_2  (cost=4.52..39.39 rows=9 width=41) (actual time=0.014..0.026 rows=8 loops=1)
+                     Recheck Cond: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+                     Heap Blocks: exact=8
+                     Buffers: shared hit=11
+                     ->  Bitmap Index Scan on bookings_2026_07_user_id_created_at_idx  (cost=0.00..4.52 rows=9 width=0) (actual time=0.011..0.011 rows=8 loops=1)
+                           Index Cond: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+                           Buffers: shared hit=3
+               ->  Bitmap Heap Scan on bookings_2026_08 b_3  (cost=4.52..39.40 rows=9 width=41) (actual time=0.013..0.022 rows=7 loops=1)
+                     Recheck Cond: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+                     Heap Blocks: exact=7
+                     Buffers: shared hit=10
+                     ->  Bitmap Index Scan on bookings_2026_08_user_id_created_at_idx  (cost=0.00..4.52 rows=9 width=0) (actual time=0.011..0.011 rows=7 loops=1)
+                           Index Cond: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+                           Buffers: shared hit=3
+               ->  Bitmap Heap Scan on bookings_2026_09 b_4  (cost=4.47..19.88 rows=4 width=41) (actual time=0.015..0.020 rows=5 loops=1)
+                     Recheck Cond: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+                     Heap Blocks: exact=5
+                     Buffers: shared hit=8
+                     ->  Bitmap Index Scan on bookings_2026_09_user_id_created_at_idx  (cost=0.00..4.46 rows=4 width=0) (actual time=0.012..0.012 rows=5 loops=1)
+                           Index Cond: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+                           Buffers: shared hit=3
+               ->  Seq Scan on bookings_2026_10 b_5  (cost=0.00..0.00 rows=1 width=90) (actual time=0.049..0.049 rows=0 loops=1)
+                     Filter: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+               ->  Seq Scan on bookings_2026_11 b_6  (cost=0.00..0.00 rows=1 width=90) (actual time=0.008..0.008 rows=0 loops=1)
+                     Filter: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+               ->  Seq Scan on bookings_2026_12 b_7  (cost=0.00..0.00 rows=1 width=90) (actual time=0.001..0.001 rows=0 loops=1)
+                     Filter: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+               ->  Seq Scan on bookings_default b_8  (cost=0.00..0.00 rows=1 width=90) (actual time=0.004..0.004 rows=0 loops=1)
+                     Filter: ((user_id = 1) AND (created_at >= (now() - '3 mons'::interval)))
+ Planning:
+   Buffers: shared hit=63 read=5
+ Planning Time: 0.975 ms
+ Execution Time: 0.392 ms
+(49 rows)
+
+Time: 2.021 ms
+
+=== ЗАПРОС 4: поиск по id (GET /api/bookings/{id}) ===
+    id больше не уникален глобально — без даты обходятся все партиции
+                                                                        QUERY PLAN                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Append  (cost=0.42..109.80 rows=17 width=61) (actual time=0.360..0.451 rows=1 loops=1)
+   Buffers: shared hit=1 read=39
+   ->  Index Scan using bookings_2025_09_pkey on bookings_2025_09 bookings_1  (cost=0.42..8.44 rows=1 width=49) (actual time=0.050..0.050 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2025_10_pkey on bookings_2025_10 bookings_2  (cost=0.42..8.44 rows=1 width=49) (actual time=0.035..0.035 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2025_11_pkey on bookings_2025_11 bookings_3  (cost=0.42..8.44 rows=1 width=49) (actual time=0.098..0.098 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2025_12_pkey on bookings_2025_12 bookings_4  (cost=0.42..8.44 rows=1 width=49) (actual time=0.043..0.043 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2026_01_pkey on bookings_2026_01 bookings_5  (cost=0.42..8.44 rows=1 width=49) (actual time=0.045..0.045 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2026_02_pkey on bookings_2026_02 bookings_6  (cost=0.42..8.44 rows=1 width=49) (actual time=0.020..0.020 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2026_03_pkey on bookings_2026_03 bookings_7  (cost=0.42..8.44 rows=1 width=49) (actual time=0.047..0.047 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2026_04_pkey on bookings_2026_04 bookings_8  (cost=0.42..8.44 rows=1 width=49) (actual time=0.019..0.019 rows=1 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared hit=1 read=3
+   ->  Index Scan using bookings_2026_05_pkey on bookings_2026_05 bookings_9  (cost=0.42..8.44 rows=1 width=49) (actual time=0.019..0.019 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2026_06_pkey on bookings_2026_06 bookings_10  (cost=0.42..8.44 rows=1 width=49) (actual time=0.019..0.019 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2026_07_pkey on bookings_2026_07 bookings_11  (cost=0.42..8.44 rows=1 width=49) (actual time=0.017..0.017 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2026_08_pkey on bookings_2026_08 bookings_12  (cost=0.42..8.44 rows=1 width=49) (actual time=0.011..0.011 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Index Scan using bookings_2026_09_pkey on bookings_2026_09 bookings_13  (cost=0.42..8.44 rows=1 width=49) (actual time=0.014..0.015 rows=0 loops=1)
+         Index Cond: (id = 1234567)
+         Buffers: shared read=3
+   ->  Seq Scan on bookings_2026_10 bookings_14  (cost=0.00..0.00 rows=1 width=98) (actual time=0.003..0.003 rows=0 loops=1)
+         Filter: (id = 1234567)
+   ->  Seq Scan on bookings_2026_11 bookings_15  (cost=0.00..0.00 rows=1 width=98) (actual time=0.001..0.001 rows=0 loops=1)
+         Filter: (id = 1234567)
+   ->  Seq Scan on bookings_2026_12 bookings_16  (cost=0.00..0.00 rows=1 width=98) (actual time=0.001..0.001 rows=0 loops=1)
+         Filter: (id = 1234567)
+   ->  Seq Scan on bookings_default bookings_17  (cost=0.00..0.00 rows=1 width=98) (actual time=0.002..0.002 rows=0 loops=1)
+         Filter: (id = 1234567)
+ Planning:
+   Buffers: shared hit=67
+ Planning Time: 0.724 ms
+ Execution Time: 0.514 ms
+(53 rows)
+
+Time: 1.816 ms
+
+=== ЗАПРОС 5: JOIN с events и venues, с ключом партиционирования ===
+                                                                                           QUERY PLAN                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=6.86..14.14 rows=50 width=157) (actual time=0.232..1.603 rows=50 loops=1)
+   Buffers: shared hit=236 read=58
+   ->  Nested Loop  (cost=6.86..21080.70 rows=144771 width=157) (actual time=0.231..1.596 rows=50 loops=1)
+         Buffers: shared hit=236 read=58
+         ->  Nested Loop  (cost=6.71..17434.34 rows=144771 width=110) (actual time=0.172..0.656 rows=50 loops=1)
+               Buffers: shared hit=159 read=49
+               ->  Merge Append  (cost=6.42..13214.38 rows=144771 width=33) (actual time=0.123..0.220 rows=50 loops=1)
+                     Sort Key: b.created_at DESC
+                     Buffers: shared hit=61
+                     Subplans Removed: 12
+                     ->  Index Scan Backward using bookings_2026_09_created_at_idx on bookings_2026_09 b_1  (cost=0.42..9397.52 rows=144755 width=33) (actual time=0.027..0.115 rows=50 loops=1)
+                           Index Cond: (created_at >= date_trunc('month'::text, now()))
+                           Buffers: shared hit=53
+                     ->  Index Scan Backward using bookings_2026_10_created_at_idx on bookings_2026_10 b_2  (cost=0.13..8.15 rows=1 width=82) (actual time=0.010..0.010 rows=0 loops=1)
+                           Index Cond: (created_at >= date_trunc('month'::text, now()))
+                           Buffers: shared hit=2
+                     ->  Index Scan Backward using bookings_2026_11_created_at_idx on bookings_2026_11 b_3  (cost=0.13..8.15 rows=1 width=82) (actual time=0.014..0.014 rows=0 loops=1)
+                           Index Cond: (created_at >= date_trunc('month'::text, now()))
+                           Buffers: shared hit=2
+                     ->  Index Scan Backward using bookings_2026_12_created_at_idx on bookings_2026_12 b_4  (cost=0.13..8.15 rows=1 width=82) (actual time=0.011..0.011 rows=0 loops=1)
+                           Index Cond: (created_at >= date_trunc('month'::text, now()))
+                           Buffers: shared hit=2
+                     ->  Index Scan Backward using bookings_default_created_at_idx on bookings_default b_5  (cost=0.13..8.15 rows=1 width=82) (actual time=0.061..0.061 rows=0 loops=1)
+                           Index Cond: (created_at >= date_trunc('month'::text, now()))
+                           Buffers: shared hit=2
+               ->  Memoize  (cost=0.29..0.31 rows=1 width=85) (actual time=0.008..0.008 rows=1 loops=50)
+                     Cache Key: b.event_id
+                     Cache Mode: logical
+                     Hits: 1  Misses: 49  Evictions: 0  Overflows: 0  Memory Usage: 9kB
+                     Buffers: shared hit=98 read=49
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..0.30 rows=1 width=85) (actual time=0.007..0.007 rows=1 loops=49)
+                           Index Cond: (id = b.event_id)
+                           Buffers: shared hit=98 read=49
+         ->  Memoize  (cost=0.15..0.20 rows=1 width=55) (actual time=0.018..0.018 rows=1 loops=50)
+               Cache Key: e.venue_id
+               Cache Mode: logical
+               Hits: 7  Misses: 43  Evictions: 0  Overflows: 0  Memory Usage: 7kB
+               Buffers: shared hit=77 read=9
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55) (actual time=0.021..0.021 rows=1 loops=43)
+                     Index Cond: (id = e.venue_id)
+                     Buffers: shared hit=77 read=9
+ Planning:
+   Buffers: shared hit=278 read=25 dirtied=3
+ Planning Time: 13.880 ms
+ Execution Time: 1.967 ms
+(45 rows)
+
+Time: 17.198 ms
+
+--- локальные индексы: по одному на каждую партицию ---
+               index_name                |           kind           |    size    
+-----------------------------------------+--------------------------+------------
+ bookings_2025_09_user_id_created_at_idx | локальный                | 8232 kB
+ bookings_2025_10_user_id_created_at_idx | локальный                | 13 MB
+ bookings_2025_11_user_id_created_at_idx | локальный                | 12 MB
+ bookings_2025_12_user_id_created_at_idx | локальный                | 13 MB
+ bookings_2026_01_user_id_created_at_idx | локальный                | 13 MB
+ bookings_2026_02_user_id_created_at_idx | локальный                | 12 MB
+ bookings_2026_03_user_id_created_at_idx | локальный                | 13 MB
+ bookings_2026_04_user_id_created_at_idx | локальный                | 12 MB
+ bookings_2026_05_user_id_created_at_idx | локальный                | 13 MB
+ bookings_2026_06_user_id_created_at_idx | локальный                | 12 MB
+ bookings_2026_07_user_id_created_at_idx | локальный                | 13 MB
+ bookings_2026_08_user_id_created_at_idx | локальный                | 13 MB
+ bookings_2026_09_user_id_created_at_idx | локальный                | 4480 kB
+ bookings_2026_10_user_id_created_at_idx | локальный                | 8192 bytes
+ bookings_2026_11_user_id_created_at_idx | локальный                | 8192 bytes
+ bookings_2026_12_user_id_created_at_idx | локальный                | 8192 bytes
+ bookings_default_user_id_created_at_idx | локальный                | 8192 bytes
+ ix_bookings_user_id_created_at          | логический (на родителе) | 0 bytes
+(18 rows)
+
+Time: 1.761 ms
+
+--- мгновенное удаление старых данных: DROP одной партиции ---
+    (демонстрация на копии, саму партицию не трогаем)
+ oldest_partition | size_freed_by_drop 
+------------------+--------------------
+ bookings_2025_09 | 52 MB
+(1 row)
+
+Time: 0.730 ms

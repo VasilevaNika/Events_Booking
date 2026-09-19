@@ -1,0 +1,176 @@
+Pager usage is off.
+Timing is on.
+
+######## ЗАДАНИЕ 7 (продолжение). Sort на активном пользователе ########
+(у user_id=123 всего 55 событий — на таком объёме планировщик оставляет Sort.
+ Моделируем пользователя с 50 000 событий, каким он станет при росте потока.)
+INSERT 0 50000
+Time: 3991.826 ms (00:03.992)
+Timing is off.
+VACUUM
+Timing is on.
+ events_of_heavy_user 
+----------------------
+                50000
+(1 row)
+
+Time: 8.531 ms
+
+--- ДО: только одиночный индекс по user_id (составной временно скрыт) ---
+BEGIN
+Time: 0.329 ms
+DROP INDEX
+Time: 2.776 ms
+                                                                        QUERY PLAN                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..623.62 rows=100 width=36) (actual time=0.019..138.427 rows=100 loops=1)
+   Buffers: shared hit=1077 read=8616 written=4734
+   ->  Index Scan Backward using idx_events_created_at on events  (cost=0.43..311561.74 rows=49995 width=36) (actual time=0.018..138.347 rows=100 loops=1)
+         Filter: (user_id = 999999)
+         Rows Removed by Filter: 9538
+         Buffers: shared hit=1077 read=8616 written=4734
+ Planning:
+   Buffers: shared hit=33
+ Planning Time: 0.350 ms
+ Execution Time: 138.495 ms
+(10 rows)
+
+Time: 139.715 ms
+ROLLBACK
+Time: 0.377 ms
+
+--- ПОСЛЕ: составной (user_id, created_at DESC) ---
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..254.58 rows=100 width=36) (actual time=0.023..0.195 rows=100 loops=1)
+   Buffers: shared hit=101
+   ->  Index Scan using idx_events_user_created on events  (cost=0.43..127061.23 rows=49995 width=36) (actual time=0.022..0.180 rows=100 loops=1)
+         Index Cond: (user_id = 999999)
+         Buffers: shared hit=101
+ Planning:
+   Buffers: shared hit=18 read=1 written=1
+ Planning Time: 0.334 ms
+ Execution Time: 0.265 ms
+(9 rows)
+
+Time: 1.111 ms
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.43..254.58 rows=100 width=36) (actual time=0.042..0.451 rows=100 loops=1)
+   Buffers: shared hit=101
+   ->  Index Scan using idx_events_user_created on events  (cost=0.43..127061.23 rows=49995 width=36) (actual time=0.040..0.430 rows=100 loops=1)
+         Index Cond: (user_id = 999999)
+         Buffers: shared hit=101
+ Planning Time: 0.230 ms
+ Execution Time: 0.484 ms
+(7 rows)
+
+Time: 1.296 ms
+
+--- убираем искусственные данные ---
+DELETE 50000
+Time: 81.017 ms
+Timing is off.
+VACUUM
+Timing is on.
+ rows_total 
+------------
+    5000000
+(1 row)
+
+Time: 278.160 ms
+
+######## ЗАДАНИЕ 9. Стоимость индексов (INSERT) ########
+DROP TABLE
+Time: 0.901 ms
+psql:/tmp/lab02/a04_tasks_7b_9_10.sql:48: NOTICE:  table "events_noidx" does not exist, skipping
+psql:/tmp/lab02/a04_tasks_7b_9_10.sql:49: NOTICE:  table "events_idx" does not exist, skipping
+DROP TABLE
+Time: 0.548 ms
+CREATE TABLE
+Time: 22.165 ms
+CREATE TABLE
+Time: 9.453 ms
+CREATE INDEX
+Time: 8.882 ms
+CREATE INDEX
+Time: 7.658 ms
+CREATE INDEX
+Time: 8.746 ms
+--- ВСТАВКА 500 000 строк БЕЗ индексов ---
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Insert on events_noidx  (cost=0.00..25000.00 rows=0 width=0) (actual time=2814.560..2814.561 rows=0 loops=1)
+   Buffers: shared hit=1008329 dirtied=4167 written=6031, temp read=855 written=855
+   ->  Subquery Scan on "*SELECT*"  (cost=0.00..25000.00 rows=500000 width=174) (actual time=116.822..1328.535 rows=500000 loops=1)
+         Buffers: shared hit=500000, temp read=855 written=855
+         ->  Function Scan on generate_series  (cost=0.00..21250.00 rows=500000 width=80) (actual time=116.793..592.376 rows=500000 loops=1)
+               Buffers: temp read=855 written=855
+ Planning Time: 0.146 ms
+ Execution Time: 2819.136 ms
+(8 rows)
+
+Time: 2833.479 ms (00:02.833)
+--- ВСТАВКА 500 000 строк С ТРЕМЯ индексами ---
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Insert on events_idx  (cost=0.00..25000.00 rows=0 width=0) (actual time=11708.613..11708.614 rows=0 loops=1)
+   Buffers: shared hit=5188718 read=3 dirtied=9480 written=9481, temp read=855 written=855
+   ->  Subquery Scan on "*SELECT*"  (cost=0.00..25000.00 rows=500000 width=174) (actual time=99.639..1538.220 rows=500000 loops=1)
+         Buffers: shared hit=500000, temp read=855 written=855
+         ->  Function Scan on generate_series  (cost=0.00..21250.00 rows=500000 width=80) (actual time=99.609..678.097 rows=500000 loops=1)
+               Buffers: temp read=855 written=855
+ Planning Time: 0.135 ms
+ Execution Time: 11711.978 ms
+(8 rows)
+
+Time: 11728.143 ms (00:11.728)
+--- размеры двух таблиц ---
+      t       | heap  | total | indexes 
+--------------+-------+-------+---------
+ events_noidx | 33 MB | 33 MB | 40 kB
+ events_idx   | 33 MB | 74 MB | 42 MB
+(2 rows)
+
+Time: 2.619 ms
+
+--- UPDATE колонки, которой НЕТ ни в одном индексе ---
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Update on events_noidx  (cost=0.00..6667.20 rows=0 width=0) (actual time=365.965..365.966 rows=0 loops=1)
+   ->  Seq Scan on events_noidx  (cost=0.00..6667.20 rows=833 width=38) (actual time=0.031..106.990 rows=50000 loops=1)
+         Filter: ((id % '10'::bigint) = 0)
+         Rows Removed by Filter: 450000
+ Planning Time: 0.129 ms
+ Execution Time: 366.028 ms
+(6 rows)
+
+Time: 426.046 ms
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Update on events_idx  (cost=0.00..6667.20 rows=0 width=0) (actual time=1759.583..1759.584 rows=0 loops=1)
+   ->  Seq Scan on events_idx  (cost=0.00..6667.20 rows=833 width=38) (actual time=0.035..132.872 rows=50000 loops=1)
+         Filter: ((id % '10'::bigint) = 0)
+         Rows Removed by Filter: 450000
+ Planning Time: 0.170 ms
+ Execution Time: 1759.648 ms
+(6 rows)
+
+Time: 1812.015 ms (00:01.812)
+
+######## ЗАДАНИЕ 10. Размер индексов ########
+       index_name        | index_size | scans 
+-------------------------+------------+-------
+ idx_events_user_created | 152 MB     |     4
+ events_pkey             | 108 MB     |     0
+ idx_events_created_at   | 107 MB     |    11
+ idx_events_user_id      | 34 MB      |     6
+(4 rows)
+
+Time: 4.882 ms
+  heap  | total  | all_indexes | pct_of_heap 
+--------+--------+-------------+-------------
+ 329 MB | 731 MB | 402 MB      |       122.3
+(1 row)
+
+Time: 1.648 ms

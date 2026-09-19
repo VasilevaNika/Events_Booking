@@ -1,0 +1,187 @@
+Pager usage is off.
+Timing is on.
+
+################################################################
+####  ЧАСТЬ B. КОНТРОЛЬНАЯ ТОЧКА: добавляем :add бронирований ####
+################################################################
+INSERT 0 900000
+Time: 62510.799 ms (01:02.511)
+Timing is off.
+VACUUM
+Timing is on.
+--- объём и размер ---
+ bookings_total 
+----------------
+        1000000
+(1 row)
+
+Time: 75.333 ms
+ heap  | total  | indexes 
+-------+--------+---------
+ 71 MB | 216 MB | 145 MB
+(1 row)
+
+Time: 1.385 ms
+ heap_pages 
+------------
+       9092
+(1 row)
+
+Time: 1.725 ms
+Time: 0.853 ms
+--- тестовый пользователь ---
+ test_user_id | his_bookings 
+--------------+--------------
+            1 |           23
+(1 row)
+
+Time: 0.890 ms
+
+=== ЗАПРОС 1: поиск по внешнему ключу (GET /api/users/{id}/stats) ===
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on bookings b  (cost=4.59..85.82 rows=21 width=41) (actual time=0.059..0.156 rows=23 loops=1)
+   Recheck Cond: (user_id = 1)
+   Heap Blocks: exact=23
+   Buffers: shared hit=24 read=2
+   ->  Bitmap Index Scan on ix_bookings_user_id_created_at  (cost=0.00..4.58 rows=21 width=0) (actual time=0.022..0.022 rows=23 loops=1)
+         Index Cond: (user_id = 1)
+         Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=6
+ Planning Time: 0.218 ms
+ Execution Time: 0.196 ms
+(11 rows)
+
+Time: 1.147 ms
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on bookings b  (cost=4.59..85.82 rows=21 width=41) (actual time=0.040..0.098 rows=23 loops=1)
+   Recheck Cond: (user_id = 1)
+   Heap Blocks: exact=23
+   Buffers: shared hit=26
+   ->  Bitmap Index Scan on ix_bookings_user_id_created_at  (cost=0.00..4.58 rows=21 width=0) (actual time=0.026..0.026 rows=23 loops=1)
+         Index Cond: (user_id = 1)
+         Buffers: shared hit=3
+ Planning Time: 0.221 ms
+ Execution Time: 0.134 ms
+(9 rows)
+
+Time: 1.065 ms
+
+=== ЗАПРОС 2: диапазон дат (GET /api/bookings?from_date=&to_date=) ===
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on bookings b  (cost=2108.55..13071.04 rows=83133 width=41) (actual time=13.343..66.876 rows=82151 loops=1)
+   Recheck Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+   Heap Blocks: exact=9091
+   Buffers: shared hit=8436 read=963 written=787
+   ->  Bitmap Index Scan on ix_bookings_created_at  (cost=0.00..2087.76 rows=83133 width=0) (actual time=10.708..10.708 rows=82151 loops=1)
+         Index Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+         Buffers: shared hit=185 read=123
+ Planning:
+   Buffers: shared hit=6 read=1
+ Planning Time: 0.379 ms
+ Execution Time: 72.739 ms
+(11 rows)
+
+Time: 73.989 ms
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on bookings b  (cost=2108.55..13071.04 rows=83133 width=41) (actual time=12.806..59.442 rows=82151 loops=1)
+   Recheck Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+   Heap Blocks: exact=9091
+   Buffers: shared hit=9399
+   ->  Bitmap Index Scan on ix_bookings_created_at  (cost=0.00..2087.76 rows=83133 width=0) (actual time=10.366..10.367 rows=82151 loops=1)
+         Index Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+         Buffers: shared hit=308
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.378 ms
+ Execution Time: 66.168 ms
+(11 rows)
+
+Time: 67.219 ms
+
+=== ЗАПРОС 3: фильтр + сортировка + JOIN (GET /api/users/{id}/bookings) ===
+                                                                           QUERY PLAN                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=208.44..208.50 rows=21 width=169) (actual time=1.527..1.535 rows=23 loops=1)
+   Buffers: shared hit=133 read=8 written=8
+   ->  Sort  (cost=208.44..208.50 rows=21 width=169) (actual time=1.525..1.529 rows=23 loops=1)
+         Sort Key: b.created_at DESC
+         Sort Method: quicksort  Memory: 30kB
+         Buffers: shared hit=133 read=8 written=8
+         ->  Nested Loop  (cost=5.01..207.98 rows=21 width=169) (actual time=0.060..1.487 rows=23 loops=1)
+               Buffers: shared hit=133 read=8 written=8
+               ->  Nested Loop  (cost=4.87..204.02 rows=21 width=122) (actual time=0.041..0.267 rows=23 loops=1)
+                     Buffers: shared hit=95
+                     ->  Bitmap Heap Scan on bookings b  (cost=4.59..85.82 rows=21 width=41) (actual time=0.030..0.110 rows=23 loops=1)
+                           Recheck Cond: (user_id = 1)
+                           Heap Blocks: exact=23
+                           Buffers: shared hit=26
+                           ->  Bitmap Index Scan on ix_bookings_user_id_created_at  (cost=0.00..4.58 rows=21 width=0) (actual time=0.021..0.022 rows=23 loops=1)
+                                 Index Cond: (user_id = 1)
+                                 Buffers: shared hit=3
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..5.63 rows=1 width=85) (actual time=0.005..0.005 rows=1 loops=23)
+                           Index Cond: (id = b.event_id)
+                           Buffers: shared hit=69
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55) (actual time=0.052..0.052 rows=1 loops=23)
+                     Index Cond: (id = e.venue_id)
+                     Buffers: shared hit=38 read=8 written=8
+ Planning:
+   Buffers: shared hit=152 read=18 written=17
+ Planning Time: 1.467 ms
+ Execution Time: 1.587 ms
+(27 rows)
+
+Time: 4.401 ms
+                                                                           QUERY PLAN                                                                            
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=208.44..208.50 rows=21 width=169) (actual time=0.306..0.313 rows=23 loops=1)
+   Buffers: shared hit=141
+   ->  Sort  (cost=208.44..208.50 rows=21 width=169) (actual time=0.304..0.308 rows=23 loops=1)
+         Sort Key: b.created_at DESC
+         Sort Method: quicksort  Memory: 30kB
+         Buffers: shared hit=141
+         ->  Nested Loop  (cost=5.01..207.98 rows=21 width=169) (actual time=0.040..0.280 rows=23 loops=1)
+               Buffers: shared hit=141
+               ->  Nested Loop  (cost=4.87..204.02 rows=21 width=122) (actual time=0.035..0.209 rows=23 loops=1)
+                     Buffers: shared hit=95
+                     ->  Bitmap Heap Scan on bookings b  (cost=4.59..85.82 rows=21 width=41) (actual time=0.026..0.085 rows=23 loops=1)
+                           Recheck Cond: (user_id = 1)
+                           Heap Blocks: exact=23
+                           Buffers: shared hit=26
+                           ->  Bitmap Index Scan on ix_bookings_user_id_created_at  (cost=0.00..4.58 rows=21 width=0) (actual time=0.016..0.016 rows=23 loops=1)
+                                 Index Cond: (user_id = 1)
+                                 Buffers: shared hit=3
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..5.63 rows=1 width=85) (actual time=0.004..0.004 rows=1 loops=23)
+                           Index Cond: (id = b.event_id)
+                           Buffers: shared hit=69
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55) (actual time=0.002..0.002 rows=1 loops=23)
+                     Index Cond: (id = e.venue_id)
+                     Buffers: shared hit=46
+ Planning:
+   Buffers: shared hit=20
+ Planning Time: 0.517 ms
+ Execution Time: 0.360 ms
+(27 rows)
+
+Time: 1.510 ms
+
+=== ЗАПРОС 2b: COUNT(*) для пагинации (тот же фильтр) ===
+                                                                        QUERY PLAN                                                                        
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=3126.93..3126.94 rows=1 width=8) (actual time=25.532..25.534 rows=1 loops=1)
+   Buffers: shared hit=309
+   ->  Index Only Scan using ix_bookings_created_at on bookings b  (cost=0.43..2919.09 rows=83133 width=0) (actual time=0.045..17.619 rows=82151 loops=1)
+         Index Cond: ((created_at >= (now() - '30 days'::interval)) AND (created_at < now()))
+         Heap Fetches: 0
+         Buffers: shared hit=309
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.601 ms
+ Execution Time: 25.592 ms
+(10 rows)
+
+Time: 26.921 ms

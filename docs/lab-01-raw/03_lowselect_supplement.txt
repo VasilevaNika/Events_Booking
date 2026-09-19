@@ -1,0 +1,71 @@
+Pager usage is off.
+################ ЗАДАНИЕ 7 (дополнение). Bitmap vs Seq Scan на одном и том же запросе ################
+--- status = 'PAID' с ЗАПРЕЩЁННЫМ bitmap/index scan => чистый Seq Scan ---
+SET
+SET
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Seq Scan on orders  (cost=0.00..23327.00 rows=246300 width=53) (actual time=0.013..87.619 rows=249807 loops=1)
+   Filter: ((status)::text = 'PAID'::text)
+   Rows Removed by Filter: 750193
+   Buffers: shared hit=10827
+ Planning:
+   Buffers: shared hit=112
+ Planning Time: 0.548 ms
+ Execution Time: 94.923 ms
+(8 rows)
+
+SET
+SET
+
+--- Условие на 50% таблицы: status IN ('PAID','NEW') ---
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=5279.36..22394.28 rows=503033 width=53) (actual time=11.496..62.004 rows=500470 loops=1)
+   Recheck Cond: ((status)::text = ANY ('{PAID,NEW}'::text[]))
+   Heap Blocks: exact=10827
+   Buffers: shared hit=11254
+   ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..5153.60 rows=503033 width=0) (actual time=10.322..10.323 rows=500470 loops=1)
+         Index Cond: ((status)::text = ANY ('{PAID,NEW}'::text[]))
+         Buffers: shared hit=427
+ Planning:
+   Buffers: shared hit=52
+ Planning Time: 0.188 ms
+ Execution Time: 76.332 ms
+(11 rows)
+
+
+--- Условие на 75% таблицы: status <> 'NEW' ---
+                                                   QUERY PLAN                                                   
+----------------------------------------------------------------------------------------------------------------
+ Seq Scan on orders  (cost=0.00..23327.00 rows=743267 width=53) (actual time=0.007..93.287 rows=749337 loops=1)
+   Filter: ((status)::text <> 'NEW'::text)
+   Rows Removed by Filter: 250663
+   Buffers: shared hit=10827
+ Planning:
+   Buffers: shared hit=2
+ Planning Time: 0.088 ms
+ Execution Time: 115.380 ms
+(8 rows)
+
+
+--- Условие на 100% таблицы: status IS NOT NULL ---
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Seq Scan on orders  (cost=0.00..20827.00 rows=1000000 width=53) (actual time=0.015..87.569 rows=1000000 loops=1)
+   Filter: (status IS NOT NULL)
+   Buffers: shared hit=10827
+ Planning Time: 0.084 ms
+ Execution Time: 116.792 ms
+(5 rows)
+
+
+################ Сводка селективности по status ################
+  status   | строк возвращает | % таблицы | доля (селективность условия) 
+-----------+------------------+-----------+------------------------------
+ NEW       |           250663 |     25.07 |                       0.2507
+ DELIVERED |           250037 |     25.00 |                       0.2500
+ PAID      |           249807 |     24.98 |                       0.2498
+ CANCELLED |           249493 |     24.95 |                       0.2495
+(4 rows)
+

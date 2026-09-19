@@ -1,0 +1,231 @@
+Pager usage is off.
+Timing is on.
+################ ЧАСТЬ 8. Партиционирование и индексы ################
+--- ДО индекса: pruning есть, но внутри партиции Seq Scan ---
+                                                                                    QUERY PLAN                                                                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..6894.25 rows=4 width=43) (actual time=6.086..20.095 rows=6 loops=1)
+   Workers Planned: 1
+   Workers Launched: 1
+   Buffers: shared hit=2805
+   ->  Parallel Seq Scan on events_2026_09_10 events  (cost=0.00..5893.85 rows=2 width=43) (actual time=3.356..13.764 rows=3 loops=2)
+         Filter: ((created_at >= '2026-09-10 00:00:00'::timestamp without time zone) AND (created_at < '2026-09-11 00:00:00'::timestamp without time zone) AND (user_id = 12345))
+         Rows Removed by Filter: 150028
+         Buffers: shared hit=2805
+ Planning:
+   Buffers: shared hit=121
+ Planning Time: 0.707 ms
+ Execution Time: 20.144 ms
+(12 rows)
+
+Time: 22.221 ms
+--- создаём индекс на РОДИТЕЛЬСКОЙ таблице ---
+CREATE INDEX
+Time: 429.515 ms
+Timing is off.
+VACUUM
+Timing is on.
+--- что физически создалось: локальные индексы в каждой партиции ---
+     index_name     | relkind |              kind               | on_table |  size   
+--------------------+---------+---------------------------------+----------+---------
+ idx_events_user_id | I       | партиционированный (логический) | events   | 0 bytes
+(1 row)
+
+Time: 3.171 ms
+--- ПОСЛЕ индекса: pruning + локальный индекс ---
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on events_2026_09_10 events  (cost=4.45..20.07 rows=4 width=43) (actual time=0.060..0.071 rows=6 loops=1)
+   Recheck Cond: (user_id = 12345)
+   Filter: ((created_at >= '2026-09-10 00:00:00'::timestamp without time zone) AND (created_at < '2026-09-11 00:00:00'::timestamp without time zone))
+   Heap Blocks: exact=6
+   Buffers: shared hit=9 read=3
+   ->  Bitmap Index Scan on events_2026_09_10_user_id_idx  (cost=0.00..4.45 rows=4 width=0) (actual time=0.053..0.053 rows=6 loops=1)
+         Index Cond: (user_id = 12345)
+         Buffers: shared hit=3 read=3
+ Planning:
+   Buffers: shared hit=34
+ Planning Time: 0.231 ms
+ Execution Time: 0.087 ms
+(12 rows)
+
+Time: 0.769 ms
+                                                                      QUERY PLAN                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on events_2026_09_10 events  (cost=4.45..20.07 rows=4 width=43) (actual time=0.028..0.041 rows=6 loops=1)
+   Recheck Cond: (user_id = 12345)
+   Filter: ((created_at >= '2026-09-10 00:00:00'::timestamp without time zone) AND (created_at < '2026-09-11 00:00:00'::timestamp without time zone))
+   Heap Blocks: exact=6
+   Buffers: shared hit=9
+   ->  Bitmap Index Scan on events_2026_09_10_user_id_idx  (cost=0.00..4.45 rows=4 width=0) (actual time=0.018..0.019 rows=6 loops=1)
+         Index Cond: (user_id = 12345)
+         Buffers: shared hit=3
+ Planning Time: 0.147 ms
+ Execution Time: 0.061 ms
+(10 rows)
+
+Time: 0.640 ms
+--- КОНТРАСТ: тот же поиск по user_id БЕЗ ключа партиционирования ---
+    (pruning не сработает — обходятся локальные индексы всех партиций)
+                                                                 QUERY PLAN                                                                 
+--------------------------------------------------------------------------------------------------------------------------------------------
+ Append  (cost=4.45..60.21 rows=12 width=43) (actual time=0.047..0.088 rows=11 loops=1)
+   Buffers: shared hit=14 read=6
+   ->  Bitmap Heap Scan on events_2026_09_09 events_1  (cost=4.45..20.05 rows=4 width=43) (actual time=0.046..0.051 rows=3 loops=1)
+         Recheck Cond: (user_id = 12345)
+         Heap Blocks: exact=3
+         Buffers: shared hit=3 read=3
+         ->  Bitmap Index Scan on events_2026_09_09_user_id_idx  (cost=0.00..4.45 rows=4 width=0) (actual time=0.042..0.042 rows=3 loops=1)
+               Index Cond: (user_id = 12345)
+               Buffers: shared read=3
+   ->  Bitmap Heap Scan on events_2026_09_10 events_2  (cost=4.45..20.05 rows=4 width=43) (actual time=0.007..0.013 rows=6 loops=1)
+         Recheck Cond: (user_id = 12345)
+         Heap Blocks: exact=6
+         Buffers: shared hit=9
+         ->  Bitmap Index Scan on events_2026_09_10_user_id_idx  (cost=0.00..4.45 rows=4 width=0) (actual time=0.005..0.005 rows=6 loops=1)
+               Index Cond: (user_id = 12345)
+               Buffers: shared hit=3
+   ->  Bitmap Heap Scan on events_2026_09_11 events_3  (cost=4.45..20.05 rows=4 width=43) (actual time=0.020..0.022 rows=2 loops=1)
+         Recheck Cond: (user_id = 12345)
+         Heap Blocks: exact=2
+         Buffers: shared hit=2 read=3
+         ->  Bitmap Index Scan on events_2026_09_11_user_id_idx  (cost=0.00..4.45 rows=4 width=0) (actual time=0.019..0.019 rows=2 loops=1)
+               Index Cond: (user_id = 12345)
+               Buffers: shared read=3
+ Planning:
+   Buffers: shared hit=40
+ Planning Time: 0.159 ms
+ Execution Time: 0.108 ms
+(27 rows)
+
+Time: 0.565 ms
+
+################ ЧАСТЬ 9. Когда партиционирование не помогает ################
+--- запрос по event_type: ключа партиционирования в WHERE нет ---
+                                                                            QUERY PLAN                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=17021.57..17021.58 rows=1 width=8) (actual time=39.979..44.310 rows=1 loops=1)
+   Buffers: shared hit=8413
+   ->  Gather  (cost=17021.35..17021.56 rows=2 width=8) (actual time=39.820..44.303 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8413
+         ->  Partial Aggregate  (cost=16021.35..16021.36 rows=1 width=8) (actual time=36.703..36.705 rows=1 loops=3)
+               Buffers: shared hit=8413
+               ->  Parallel Append  (cost=0.00..15691.12 rows=132092 width=0) (actual time=0.009..32.564 rows=104985 loops=3)
+                     Buffers: shared hit=8413
+                     ->  Parallel Seq Scan on events_2026_09_10 events_2  (cost=0.00..5011.33 rows=62130 width=0) (actual time=0.005..9.307 rows=35154 loops=3)
+                           Filter: ((event_type)::text = 'click'::text)
+                           Rows Removed by Filter: 64866
+                           Buffers: shared hit=2805
+                     ->  Parallel Seq Scan on events_2026_09_09 events_1  (cost=0.00..5011.21 rows=62115 width=0) (actual time=0.005..13.852 rows=52409 loops=2)
+                           Filter: ((event_type)::text = 'click'::text)
+                           Rows Removed by Filter: 97614
+                           Buffers: shared hit=2805
+                     ->  Parallel Seq Scan on events_2026_09_11 events_3  (cost=0.00..5008.12 rows=62237 width=0) (actual time=0.010..25.084 rows=104675 loops=1)
+                           Filter: ((event_type)::text = 'click'::text)
+                           Rows Removed by Filter: 195221
+                           Buffers: shared hit=2803
+ Planning:
+   Buffers: shared hit=14
+ Planning Time: 0.122 ms
+ Execution Time: 44.342 ms
+(26 rows)
+
+Time: 45.273 ms
+--- добавляем индекс по event_type ---
+CREATE INDEX
+Time: 550.626 ms
+Timing is off.
+VACUUM
+Timing is on.
+                                                                                                  QUERY PLAN                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=7285.48..7285.49 rows=1 width=8) (actual time=21.553..23.686 rows=1 loops=1)
+   Buffers: shared hit=8 read=273
+   ->  Gather  (cost=7285.27..7285.48 rows=2 width=8) (actual time=21.425..23.678 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=8 read=273
+         ->  Partial Aggregate  (cost=6285.27..6285.28 rows=1 width=8) (actual time=18.294..18.296 rows=1 loops=3)
+               Buffers: shared hit=8 read=273
+               ->  Parallel Append  (cost=0.42..5957.13 rows=131255 width=0) (actual time=0.055..14.118 rows=104985 loops=3)
+                     Buffers: shared hit=8 read=273
+                     ->  Parallel Index Only Scan using events_2026_09_09_event_type_idx on events_2026_09_09 events_1  (cost=0.42..1774.74 rows=61992 width=0) (actual time=0.044..2.817 rows=34939 loops=3)
+                           Index Cond: (event_type = 'click'::text)
+                           Heap Fetches: 0
+                           Buffers: shared hit=4 read=91
+                     ->  Parallel Index Only Scan using events_2026_09_11_event_type_idx on events_2026_09_11 events_3  (cost=0.42..1765.09 rows=61744 width=0) (actual time=0.038..4.023 rows=52338 loops=2)
+                           Index Cond: (event_type = 'click'::text)
+                           Heap Fetches: 0
+                           Buffers: shared hit=3 read=91
+                     ->  Parallel Index Only Scan using events_2026_09_10_event_type_idx on events_2026_09_10 events_2  (cost=0.42..1761.03 rows=61565 width=0) (actual time=0.044..8.469 rows=105462 loops=1)
+                           Index Cond: (event_type = 'click'::text)
+                           Heap Fetches: 0
+                           Buffers: shared hit=1 read=91
+ Planning:
+   Buffers: shared hit=35
+ Planning Time: 0.252 ms
+ Execution Time: 23.725 ms
+(26 rows)
+
+Time: 24.632 ms
+                                                                                                  QUERY PLAN                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=7285.48..7285.49 rows=1 width=8) (actual time=21.194..23.397 rows=1 loops=1)
+   Buffers: shared hit=281 read=1
+   ->  Gather  (cost=7285.27..7285.48 rows=2 width=8) (actual time=20.924..23.385 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=281 read=1
+         ->  Partial Aggregate  (cost=6285.27..6285.28 rows=1 width=8) (actual time=18.118..18.119 rows=1 loops=3)
+               Buffers: shared hit=281 read=1
+               ->  Parallel Append  (cost=0.42..5957.13 rows=131255 width=0) (actual time=0.067..13.961 rows=104985 loops=3)
+                     Buffers: shared hit=281 read=1
+                     ->  Parallel Index Only Scan using events_2026_09_09_event_type_idx on events_2026_09_09 events_1  (cost=0.42..1774.74 rows=61992 width=0) (actual time=0.035..2.793 rows=34939 loops=3)
+                           Index Cond: (event_type = 'click'::text)
+                           Heap Fetches: 0
+                           Buffers: shared hit=95 read=1
+                     ->  Parallel Index Only Scan using events_2026_09_11_event_type_idx on events_2026_09_11 events_3  (cost=0.42..1765.09 rows=61744 width=0) (actual time=0.028..4.016 rows=52338 loops=2)
+                           Index Cond: (event_type = 'click'::text)
+                           Heap Fetches: 0
+                           Buffers: shared hit=94
+                     ->  Parallel Index Only Scan using events_2026_09_10_event_type_idx on events_2026_09_10 events_2  (cost=0.42..1761.03 rows=61565 width=0) (actual time=0.112..8.322 rows=105462 loops=1)
+                           Index Cond: (event_type = 'click'::text)
+                           Heap Fetches: 0
+                           Buffers: shared hit=92
+ Planning Time: 0.166 ms
+ Execution Time: 23.449 ms
+(24 rows)
+
+Time: 24.025 ms
+--- а вот комбинация «ключ партиционирования + индекс» ---
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Aggregate  (cost=6069.71..6069.72 rows=1 width=8) (actual time=24.831..24.833 rows=1 loops=1)
+   Buffers: shared hit=2896
+   ->  Bitmap Heap Scan on events_2026_09_10 events  (cost=1171.54..5808.11 rows=104640 width=0) (actual time=2.562..20.637 rows=105462 loops=1)
+         Recheck Cond: ((event_type)::text = 'click'::text)
+         Filter: ((created_at >= '2026-09-10 00:00:00'::timestamp without time zone) AND (created_at < '2026-09-11 00:00:00'::timestamp without time zone))
+         Heap Blocks: exact=2805
+         Buffers: shared hit=2896
+         ->  Bitmap Index Scan on events_2026_09_10_event_type_idx  (cost=0.00..1145.38 rows=104661 width=0) (actual time=2.273..2.274 rows=105462 loops=1)
+               Index Cond: ((event_type)::text = 'click'::text)
+               Buffers: shared hit=91
+ Planning:
+   Buffers: shared hit=5
+ Planning Time: 0.137 ms
+ Execution Time: 24.854 ms
+(14 rows)
+
+Time: 25.359 ms
+--- селективность event_type ---
+ event_type | count  |  pct  
+------------+--------+-------
+ view       | 351284 | 39.03
+ click      | 314955 | 34.99
+ login      | 198559 | 22.06
+ purchase   |  35204 |  3.91
+(4 rows)
+
+Time: 56.918 ms

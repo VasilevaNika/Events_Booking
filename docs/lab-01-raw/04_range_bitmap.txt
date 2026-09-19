@@ -1,0 +1,185 @@
+Pager usage is off.
+################ ЗАДАНИЕ 9. Range Query — ДО индекса по created_at ################
+                                                         QUERY PLAN                                                         
+----------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..20027.37 rows=9087 width=53) (actual time=0.712..128.220 rows=9822 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=10827
+   ->  Parallel Seq Scan on orders  (cost=0.00..18118.67 rows=3786 width=53) (actual time=0.053..115.188 rows=3274 loops=3)
+         Filter: (created_at > (now() - '7 days'::interval))
+         Rows Removed by Filter: 330059
+         Buffers: shared hit=10827
+ Planning:
+   Buffers: shared hit=110
+ Planning Time: 0.679 ms
+ Execution Time: 128.832 ms
+(12 rows)
+
+
+--- Создаём индекс по created_at ---
+CREATE INDEX
+ANALYZE
+ idx_orders_created_at_size 
+----------------------------
+ 21 MB
+(1 row)
+
+
+--- ПОСЛЕ индекса: created_at > NOW() - 7 days ---
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=175.65..11202.48 rows=9190 width=53) (actual time=4.428..16.409 rows=9822 loops=1)
+   Recheck Cond: (created_at > (now() - '7 days'::interval))
+   Heap Blocks: exact=6522
+   Buffers: shared hit=6528 read=27
+   ->  Bitmap Index Scan on idx_orders_created_at  (cost=0.00..173.36 rows=9190 width=0) (actual time=3.094..3.094 rows=9822 loops=1)
+         Index Cond: (created_at > (now() - '7 days'::interval))
+         Buffers: shared hit=6 read=27
+ Planning:
+   Buffers: shared hit=28 read=4
+ Planning Time: 0.544 ms
+ Execution Time: 17.098 ms
+(11 rows)
+
+
+--- Диапазон 1 day ---
+                                                             QUERY PLAN                                                              
+-------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=26.57..3738.16 rows=1309 width=53) (actual time=0.797..3.119 rows=1378 loops=1)
+   Recheck Cond: (created_at > (now() - '1 day'::interval))
+   Heap Blocks: exact=1299
+   Buffers: shared hit=1306
+   ->  Bitmap Index Scan on idx_orders_created_at  (cost=0.00..26.25 rows=1309 width=0) (actual time=0.327..0.327 rows=1378 loops=1)
+         Index Cond: (created_at > (now() - '1 day'::interval))
+         Buffers: shared hit=7
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.176 ms
+ Execution Time: 3.239 ms
+(11 rows)
+
+--- Диапазон 1 month ---
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=777.66..12330.02 rows=41449 width=53) (actual time=13.756..37.995 rows=42010 loops=1)
+   Recheck Cond: (created_at > (now() - '1 mon'::interval))
+   Heap Blocks: exact=10641
+   Buffers: shared hit=10671 read=88
+   ->  Bitmap Index Scan on idx_orders_created_at  (cost=0.00..767.30 rows=41449 width=0) (actual time=11.226..11.226 rows=42010 loops=1)
+         Index Cond: (created_at > (now() - '1 mon'::interval))
+         Buffers: shared hit=30 read=88
+ Planning Time: 0.172 ms
+ Execution Time: 40.477 ms
+(9 rows)
+
+--- Диапазон 6 months ---
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4598.33..19719.96 rows=245407 width=53) (actual time=80.502..133.672 rows=249979 loops=1)
+   Recheck Cond: (created_at > (now() - '6 mons'::interval))
+   Heap Blocks: exact=10827
+   Buffers: shared hit=10944 read=569
+   ->  Bitmap Index Scan on idx_orders_created_at  (cost=0.00..4536.98 rows=245407 width=0) (actual time=78.293..78.293 rows=249979 loops=1)
+         Index Cond: (created_at > (now() - '6 mons'::interval))
+         Buffers: shared hit=117 read=569
+ Planning Time: 0.142 ms
+ Execution Time: 145.842 ms
+(9 rows)
+
+--- Диапазон 1 year ---
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Seq Scan on orders  (cost=0.00..28327.00 rows=493011 width=53) (actual time=0.011..332.612 rows=500049 loops=1)
+   Filter: (created_at > (now() - '1 year'::interval))
+   Rows Removed by Filter: 499951
+   Buffers: shared hit=10827
+ Planning Time: 0.118 ms
+ Execution Time: 357.430 ms
+(6 rows)
+
+
+--- Сколько строк попадает в каждый диапазон ---
+  range   | count  |  pct  
+----------+--------+-------
+ 1 day    |   1378 |  0.14
+ 7 days   |   9822 |  0.98
+ 1 month  |  42010 |  4.20
+ 6 months | 249979 | 25.00
+ 1 year   | 500049 | 50.00
+(5 rows)
+
+
+################ ЗАДАНИЕ 10. Bitmap Index Scan + Bitmap Heap Scan ################
+--- amount BETWEEN 1000 AND 3000 (индекса по amount нет) ---
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Seq Scan on orders  (cost=0.00..25827.00 rows=196186 width=53) (actual time=0.010..251.773 rows=199934 loops=1)
+   Filter: ((amount >= '1000'::numeric) AND (amount <= '3000'::numeric))
+   Rows Removed by Filter: 800066
+   Buffers: shared hit=10827
+ Planning:
+   Buffers: shared hit=6
+ Planning Time: 0.157 ms
+ Execution Time: 264.177 ms
+(8 rows)
+
+
+--- создаём индекс по amount и повторяем ---
+CREATE INDEX
+ANALYZE
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=4189.03..17973.01 rows=197132 width=53) (actual time=55.437..104.504 rows=199934 loops=1)
+   Recheck Cond: ((amount >= '1000'::numeric) AND (amount <= '3000'::numeric))
+   Heap Blocks: exact=10827
+   Buffers: shared hit=10827 read=549
+   ->  Bitmap Index Scan on idx_orders_amount  (cost=0.00..4139.74 rows=197132 width=0) (actual time=53.384..53.385 rows=199934 loops=1)
+         Index Cond: ((amount >= '1000'::numeric) AND (amount <= '3000'::numeric))
+         Buffers: shared read=549
+ Planning:
+   Buffers: shared hit=23 read=1
+ Planning Time: 0.414 ms
+ Execution Time: 114.521 ms
+(11 rows)
+
+
+--- «Средний» объём строк: user_id BETWEEN 100 AND 400 (≈0.3% таблицы) ---
+                                                            QUERY PLAN                                                            
+----------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on orders  (cost=45.30..6470.74 rows=2817 width=53) (actual time=0.843..4.121 rows=2923 loops=1)
+   Recheck Cond: ((user_id >= 100) AND (user_id <= 400))
+   Heap Blocks: exact=2564
+   Buffers: shared hit=2569 read=4
+   ->  Bitmap Index Scan on idx_orders_user_id  (cost=0.00..44.59 rows=2817 width=0) (actual time=0.421..0.422 rows=2923 loops=1)
+         Index Cond: ((user_id >= 100) AND (user_id <= 400))
+         Buffers: shared hit=5 read=4
+ Planning:
+   Buffers: shared hit=11 read=3
+ Planning Time: 0.248 ms
+ Execution Time: 4.296 ms
+(11 rows)
+
+
+--- Для сравнения: точечный Index Scan (1 строка) vs Bitmap ---
+                                                               QUERY PLAN                                                               
+----------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=47.65..47.65 rows=1 width=53) (actual time=0.034..0.035 rows=1 loops=1)
+   Buffers: shared hit=9
+   ->  Sort  (cost=47.65..47.68 rows=11 width=53) (actual time=0.032..0.033 rows=1 loops=1)
+         Sort Key: id
+         Sort Method: top-N heapsort  Memory: 25kB
+         Buffers: shared hit=9
+         ->  Bitmap Heap Scan on orders  (cost=4.51..47.60 rows=11 width=53) (actual time=0.016..0.026 rows=6 loops=1)
+               Recheck Cond: (user_id = 123)
+               Heap Blocks: exact=6
+               Buffers: shared hit=9
+               ->  Bitmap Index Scan on idx_orders_user_id  (cost=0.00..4.51 rows=11 width=0) (actual time=0.010..0.010 rows=6 loops=1)
+                     Index Cond: (user_id = 123)
+                     Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=32
+ Planning Time: 0.262 ms
+ Execution Time: 0.059 ms
+(17 rows)
+

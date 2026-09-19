@@ -1,0 +1,229 @@
+Pager usage is off.
+################ ЗАДАНИЕ 17. Partial Index ################
+--- Доля строк со статусом NEW ---
+ new_rows |  total  |  pct  
+----------+---------+-------
+   250663 | 1000000 | 25.07
+(1 row)
+
+
+--- ДО: WHERE status = 'NEW' ORDER BY created_at (есть обычный idx_orders_status) ---
+                                                                  QUERY PLAN                                                                   
+-----------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=47284.90..47903.07 rows=247267 width=53) (actual time=297.970..351.704 rows=250663 loops=1)
+   Sort Key: created_at
+   Sort Method: external merge  Disk: 16232kB
+   Buffers: shared hit=11043 read=1, temp read=2029 written=2035
+   ->  Bitmap Heap Scan on orders  (cost=2764.74..16682.58 rows=247267 width=53) (actual time=23.176..123.405 rows=250663 loops=1)
+         Recheck Cond: ((status)::text = 'NEW'::text)
+         Heap Blocks: exact=10827
+         Buffers: shared hit=11040 read=1
+         ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..2702.93 rows=247267 width=0) (actual time=20.365..20.366 rows=250663 loops=1)
+               Index Cond: ((status)::text = 'NEW'::text)
+               Buffers: shared hit=213 read=1
+ Planning:
+   Buffers: shared hit=56
+ Planning Time: 0.625 ms
+ Execution Time: 369.329 ms
+(15 rows)
+
+
+--- Создаём частичный индекс ---
+CREATE INDEX
+ANALYZE
+ partial_idx_size | full_status_idx_size | full_created_at_idx_size 
+------------------+----------------------+--------------------------
+ 5520 kB          | 6848 kB              | 21 MB
+(1 row)
+
+--- ПОСЛЕ: WHERE status = 'NEW' ORDER BY created_at ---
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=47109.69..47725.03 rows=246133 width=53) (actual time=183.530..241.356 rows=250663 loops=1)
+   Sort Key: created_at
+   Sort Method: external merge  Disk: 16232kB
+   Buffers: shared hit=11041, temp read=2029 written=2035
+   ->  Bitmap Heap Scan on orders  (cost=2751.96..16655.62 rows=246133 width=53) (actual time=10.374..73.534 rows=250663 loops=1)
+         Recheck Cond: ((status)::text = 'NEW'::text)
+         Heap Blocks: exact=10827
+         Buffers: shared hit=11041
+         ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..2690.42 rows=246133 width=0) (actual time=8.310..8.311 rows=250663 loops=1)
+               Index Cond: ((status)::text = 'NEW'::text)
+               Buffers: shared hit=214
+ Planning:
+   Buffers: shared hit=23 read=1
+ Planning Time: 0.470 ms
+ Execution Time: 260.815 ms
+(15 rows)
+
+--- ПОСЛЕ: тот же запрос с LIMIT 100 (типичный API-сценарий) ---
+                                                               QUERY PLAN                                                                
+-----------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..20.64 rows=100 width=53) (actual time=0.072..0.301 rows=100 loops=1)
+   Buffers: shared hit=100 read=3
+   ->  Index Scan using idx_orders_new on orders  (cost=0.42..49760.02 rows=246133 width=53) (actual time=0.071..0.289 rows=100 loops=1)
+         Buffers: shared hit=100 read=3
+ Planning Time: 0.246 ms
+ Execution Time: 0.332 ms
+(6 rows)
+
+--- Для сравнения: LIMIT 100 без частичного индекса ---
+BEGIN
+DROP INDEX
+                                                                   QUERY PLAN                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..29.59 rows=100 width=53) (actual time=0.066..0.804 rows=100 loops=1)
+   Buffers: shared hit=376 read=3
+   ->  Index Scan using idx_orders_created_at on orders  (cost=0.42..71788.11 rows=246133 width=53) (actual time=0.064..0.788 rows=100 loops=1)
+         Filter: ((status)::text = 'NEW'::text)
+         Rows Removed by Filter: 275
+         Buffers: shared hit=376 read=3
+ Planning:
+   Buffers: shared hit=7
+ Planning Time: 0.235 ms
+ Execution Time: 0.902 ms
+(10 rows)
+
+ROLLBACK
+
+--- Partial index по РЕДКОМУ подмножеству (status=NEW AND amount<100, ~0.25% таблицы) ---
+ rare_rows |  pct  
+-----------+-------
+      2463 | 0.246
+(1 row)
+
+  ДО:
+                                                                    QUERY PLAN                                                                     
+---------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=8821.50..8827.54 rows=2417 width=53) (actual time=15.637..15.885 rows=2463 loops=1)
+   Sort Key: created_at
+   Sort Method: quicksort  Memory: 289kB
+   Buffers: shared hit=2450
+   ->  Bitmap Heap Scan on orders  (cost=2873.95..8685.67 rows=2417 width=53) (actual time=12.476..15.078 rows=2463 loops=1)
+         Recheck Cond: ((amount < '100'::numeric) AND ((status)::text = 'NEW'::text))
+         Heap Blocks: exact=2206
+         Buffers: shared hit=2450
+         ->  BitmapAnd  (cost=2873.95..2873.95 rows=2417 width=0) (actual time=12.116..12.118 rows=0 loops=1)
+               Buffers: shared hit=244
+               ->  Bitmap Index Scan on idx_orders_amount  (cost=0.00..182.07 rows=9819 width=0) (actual time=2.729..2.730 rows=9996 loops=1)
+                     Index Cond: (amount < '100'::numeric)
+                     Buffers: shared hit=30
+               ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..2690.42 rows=246133 width=0) (actual time=8.970..8.970 rows=250663 loops=1)
+                     Index Cond: ((status)::text = 'NEW'::text)
+                     Buffers: shared hit=214
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.413 ms
+ Execution Time: 16.053 ms
+(20 rows)
+
+CREATE INDEX
+ANALYZE
+ rare_partial_idx_size 
+-----------------------
+ 72 kB
+(1 row)
+
+  ПОСЛЕ:
+                                                                QUERY PLAN                                                                
+------------------------------------------------------------------------------------------------------------------------------------------
+ Sort  (cost=6037.19..6043.30 rows=2443 width=53) (actual time=3.870..4.112 rows=2463 loops=1)
+   Sort Key: created_at
+   Sort Method: quicksort  Memory: 289kB
+   Buffers: shared hit=2206 read=8
+   ->  Bitmap Heap Scan on orders  (cost=46.06..5899.72 rows=2443 width=53) (actual time=0.729..3.274 rows=2463 loops=1)
+         Recheck Cond: (((status)::text = 'NEW'::text) AND (amount < '100'::numeric))
+         Heap Blocks: exact=2206
+         Buffers: shared hit=2206 read=8
+         ->  Bitmap Index Scan on idx_orders_new_small  (cost=0.00..45.45 rows=2443 width=0) (actual time=0.380..0.380 rows=2463 loops=1)
+               Buffers: shared read=8
+ Planning:
+   Buffers: shared hit=50 read=1
+ Planning Time: 0.689 ms
+ Execution Time: 4.268 ms
+(14 rows)
+
+
+--- Частичный индекс НЕ подходит другому запросу ---
+                                                                   QUERY PLAN                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..29.47 rows=100 width=53) (actual time=0.056..0.753 rows=100 loops=1)
+   Buffers: shared hit=448
+   ->  Index Scan using idx_orders_created_at on orders  (cost=0.42..71788.33 rows=247167 width=53) (actual time=0.055..0.738 rows=100 loops=1)
+         Filter: ((status)::text = 'PAID'::text)
+         Rows Removed by Filter: 344
+         Buffers: shared hit=448
+ Planning Time: 0.202 ms
+ Execution Time: 0.784 ms
+(8 rows)
+
+
+################ ЗАДАНИЕ 18. Expression Index ################
+psql:/tmp/lab01/08_partial_expression.sql:46: NOTICE:  table "users" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+INSERT 0 500000
+INSERT 0 1
+CREATE INDEX
+ANALYZE
+ count  
+--------
+ 500001
+(1 row)
+
+
+--- Обычный индекс есть; запрос по LOWER(email) ---
+                                                       QUERY PLAN                                                        
+-------------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..10057.01 rows=2500 width=63) (actual time=196.496..204.216 rows=1 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=5682
+   ->  Parallel Seq Scan on users  (cost=0.00..8807.01 rows=1042 width=63) (actual time=190.734..190.734 rows=0 loops=3)
+         Filter: (lower((email)::text) = 'test@example.com'::text)
+         Rows Removed by Filter: 166667
+         Buffers: shared hit=5682
+ Planning Time: 0.062 ms
+ Execution Time: 204.244 ms
+(10 rows)
+
+--- Для контраста: точное совпадение без функции — индекс работает ---
+                                                       QUERY PLAN                                                       
+------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_users_email on users  (cost=0.42..8.44 rows=1 width=63) (actual time=0.060..0.062 rows=1 loops=1)
+   Index Cond: ((email)::text = 'Test@Example.com'::text)
+   Buffers: shared hit=1 read=3
+ Planning Time: 0.091 ms
+ Execution Time: 0.079 ms
+(5 rows)
+
+
+--- Создаём индекс по выражению ---
+CREATE INDEX
+ANALYZE
+--- ПОСЛЕ: запрос по LOWER(email) ---
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_users_lower_email on users  (cost=0.42..8.44 rows=1 width=63) (actual time=0.032..0.033 rows=1 loops=1)
+   Index Cond: (lower((email)::text) = 'test@example.com'::text)
+   Buffers: shared hit=1 read=3
+ Planning:
+   Buffers: shared hit=15 read=1
+ Planning Time: 0.301 ms
+ Execution Time: 0.050 ms
+(7 rows)
+
+                                                          QUERY PLAN                                                          
+------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_users_lower_email on users  (cost=0.42..8.44 rows=1 width=63) (actual time=0.021..0.023 rows=1 loops=1)
+   Index Cond: (lower((email)::text) = 'test@example.com'::text)
+   Buffers: shared hit=4
+ Planning Time: 0.071 ms
+ Execution Time: 0.039 ms
+(5 rows)
+
+ plain_email_idx | expression_idx 
+-----------------+----------------
+ 37 MB           | 37 MB
+(1 row)
+

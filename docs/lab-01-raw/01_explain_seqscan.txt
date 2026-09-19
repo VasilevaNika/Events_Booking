@@ -1,0 +1,92 @@
+Pager usage is off.
+################ ЗАДАНИЕ 3. EXPLAIN (без ANALYZE) ################
+                                QUERY PLAN                                
+--------------------------------------------------------------------------
+ Gather  (cost=1000.00..17036.43 rows=11 width=53)
+   Workers Planned: 2
+   ->  Parallel Seq Scan on orders  (cost=0.00..16035.33 rows=5 width=53)
+         Filter: (user_id = 123)
+(4 rows)
+
+
+################ ЗАДАНИЕ 4. EXPLAIN ANALYZE (прогон 1, холодный) ################
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..17036.43 rows=11 width=53) (actual time=7.962..42.546 rows=6 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=10827
+   ->  Parallel Seq Scan on orders  (cost=0.00..16035.33 rows=5 width=53) (actual time=14.567..34.457 rows=2 loops=3)
+         Filter: (user_id = 123)
+         Rows Removed by Filter: 333331
+         Buffers: shared hit=10827
+ Planning Time: 0.056 ms
+ Execution Time: 42.578 ms
+(10 rows)
+
+
+################ ЗАДАНИЕ 4. EXPLAIN ANALYZE (прогон 2, тёплый кэш) ################
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Gather  (cost=1000.00..17036.43 rows=11 width=53) (actual time=4.403..27.559 rows=6 loops=1)
+   Workers Planned: 2
+   Workers Launched: 2
+   Buffers: shared hit=10827
+   ->  Parallel Seq Scan on orders  (cost=0.00..16035.33 rows=5 width=53) (actual time=7.809..19.684 rows=2 loops=3)
+         Filter: (user_id = 123)
+         Rows Removed by Filter: 333331
+         Buffers: shared hit=10827
+ Planning Time: 0.060 ms
+ Execution Time: 27.587 ms
+(10 rows)
+
+
+################ ЗАДАНИЕ 5.1. Seq Scan: SELECT * FROM orders (без WHERE) ################
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Seq Scan on orders  (cost=0.00..20827.00 rows=1000000 width=53) (actual time=0.010..54.676 rows=1000000 loops=1)
+   Buffers: shared hit=10827
+ Planning Time: 0.060 ms
+ Execution Time: 83.496 ms
+(4 rows)
+
+
+################ ЗАДАНИЕ 5.2. Seq Scan: WHERE amount > 0 (условие ничего не отсекает) ################
+                                                    QUERY PLAN                                                    
+------------------------------------------------------------------------------------------------------------------
+ Seq Scan on orders  (cost=0.00..23327.00 rows=999900 width=53) (actual time=0.010..116.181 rows=1000000 loops=1)
+   Filter: (amount > '0'::numeric)
+   Buffers: shared hit=10827
+ Planning:
+   Buffers: shared hit=7
+ Planning Time: 0.118 ms
+ Execution Time: 144.725 ms
+(7 rows)
+
+
+################ Справка: сколько строк реально попадает под amount > 0 ################
+ rows_amount_gt_0 | rows_total 
+------------------+------------
+          1000000 |    1000000
+(1 row)
+
+
+################ Справка: параметры планировщика ################
+              name               | setting 
+---------------------------------+---------
+ effective_cache_size            | 524288
+ max_parallel_workers_per_gather | 2
+ min_parallel_table_scan_size    | 1024
+ random_page_cost                | 4
+ seq_page_cost                   | 1
+ shared_buffers                  | 16384
+ work_mem                        | 4096
+(7 rows)
+
+
+################ Справка: список индексов на orders ДО оптимизации ################
+  indexname  |                             indexdef                              
+-------------+-------------------------------------------------------------------
+ orders_pkey | CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (id)
+(1 row)
+

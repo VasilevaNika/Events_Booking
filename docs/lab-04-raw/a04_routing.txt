@@ -1,0 +1,107 @@
+
+──────────────────────────────────────────────────────────────────────────────
+  1. Бэкенд видит оба сервера: GET /health/db
+──────────────────────────────────────────────────────────────────────────────
+{
+    "primary": {
+        "status": "up",
+        "role": "primary",
+        "in_recovery": false,
+        "server_addr": "172.20.0.3/32",
+        "application_name": "booking-backend-primary",
+        "transaction_read_only": "off",
+        "wal_lsn": "5/28AF31F0",
+        "replay_lsn": null,
+        "replay_paused": null,
+        "seconds_since_last_replayed_tx": null
+    },
+    "replica": {
+        "status": "up",
+        "role": "replica",
+        "in_recovery": true,
+        "server_addr": "172.20.0.5/32",
+        "application_name": "booking-backend-replica",
+        "transaction_read_only": "on",
+        "wal_lsn": "5/28AF31F0",
+        "replay_lsn": "5/28AF31F0",
+        "replay_paused": false,
+        "seconds_since_last_replayed_tx": 52.321
+    }
+}
+
+──────────────────────────────────────────────────────────────────────────────
+  2. Куда уходит каждый GET — заголовок X-DB-Node
+──────────────────────────────────────────────────────────────────────────────
+  GET /api/events?page_size=3          → replica
+  GET /api/events/stats/categories     → replica
+  GET /api/bookings/stats/revenue      → replica
+  GET /api/events/1                    → primary (get_db, без заголовка)
+  GET /api/bookings?page_size=3        → primary (get_db, без заголовка)
+  GET /api/users/1/bookings            → primary (get_db, без заголовка)
+
+──────────────────────────────────────────────────────────────────────────────
+  3. Соединения бэкенда на каждом сервере (pg_stat_activity)
+──────────────────────────────────────────────────────────────────────────────
+PRIMARY
+      application_name      | connections 
+----------------------------+-------------
+ booking-backend-primary    |           1
+ booking-backend-primary-ro |           1
+(2 rows)
+
+REPLICA
+    application_name     | connections 
+-------------------------+-------------
+ booking-backend-replica |           1
+(1 row)
+
+
+──────────────────────────────────────────────────────────────────────────────
+  4. Запись через API попадает на primary
+──────────────────────────────────────────────────────────────────────────────
+  POST /api/bookings → HTTP 201, id=5000005
+  n_tup_ins по партициям bookings на PRIMARY: было 5000004, стало 5000005
+  n_tup_ins по партициям bookings на REPLICA: было 0, стало 0
+  строка при этом есть на обоих серверах:
+    primary: id=5000005 created_at=2026-09-13 21:11:13.053169+00
+    replica: id=5000005 created_at=2026-09-13 21:11:13.053169+00
+  INSERT выполнил primary. Реплика ничего не вставляла — она воспроизвела WAL,
+  поэтому её счётчик вставок не меняется, хотя строка у неё появилась.
+
+──────────────────────────────────────────────────────────────────────────────
+  5. Отказ реплики: останавливаем booking_postgres_replica
+──────────────────────────────────────────────────────────────────────────────
+  реплика остановлена
+  GET /api/events → HTTP 200
+  GET /api/events?page_size=3          → primary-fallback
+  GET /api/bookings/stats/revenue      → primary-fallback
+
+{
+    "primary": {
+        "status": "up",
+        "role": "primary",
+        "in_recovery": false,
+        "server_addr": "172.20.0.3/32",
+        "application_name": "booking-backend-primary",
+        "transaction_read_only": "off",
+        "wal_lsn": "5/28B02C90",
+        "replay_lsn": null,
+        "replay_paused": null,
+        "seconds_since_last_replayed_tx": null
+    },
+    "replica": {
+        "status": "down",
+        "error": "could not translate host name \"postgres-replica\" to address: Name or service not known\n"
+    }
+}
+
+──────────────────────────────────────────────────────────────────────────────
+  6. Реплика снова запущена — чтение возвращается на неё
+──────────────────────────────────────────────────────────────────────────────
+  реплика: healthy
+  GET /api/events?page_size=3          → replica
+-[ RECORD 1 ]----+----------------
+application_name | booking_replica
+state            | streaming
+replay_lag       | 00:00:00.000395
+

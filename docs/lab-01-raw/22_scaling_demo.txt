@@ -1,0 +1,102 @@
+Pager usage is off.
+######## Демонстрация масштабирования: пользователь с 20 000 бронирований ########
+(в текущих данных максимум 40 заказов на пользователя — эффект индекса не виден;
+ моделируем «активного» пользователя, каким он станет через год роста сервиса)
+INSERT 0 20000
+VACUUM
+ bookings_of_heavy_user 
+------------------------
+                  20014
+(1 row)
+
+
+--- ДО: только одиночный индекс по user_id (составной временно скрыт) ---
+BEGIN
+DROP INDEX
+CREATE INDEX
+ANALYZE
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..73.64 rows=20 width=41) (actual time=0.013..2.841 rows=20 loops=1)
+   Buffers: shared hit=751 read=326
+   ->  Index Scan Backward using ix_bookings_created_at on bookings b  (cost=0.42..71069.12 rows=19414 width=41) (actual time=0.012..2.833 rows=20 loops=1)
+         Filter: (user_id = 1)
+         Rows Removed by Filter: 1044
+         Buffers: shared hit=751 read=326
+ Planning:
+   Buffers: shared hit=34 read=1
+ Planning Time: 0.198 ms
+ Execution Time: 2.863 ms
+(10 rows)
+
+ROLLBACK
+
+--- ПОСЛЕ: составной индекс (user_id, created_at DESC) ---
+                                                                        QUERY PLAN                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..40.46 rows=20 width=41) (actual time=0.025..0.067 rows=20 loops=1)
+   Buffers: shared hit=23
+   ->  Index Scan using ix_bookings_user_id_created_at on bookings b  (cost=0.42..38252.58 rows=19108 width=41) (actual time=0.024..0.062 rows=20 loops=1)
+         Index Cond: (user_id = 1)
+         Buffers: shared hit=23
+ Planning:
+   Buffers: shared hit=41
+ Planning Time: 0.407 ms
+ Execution Time: 0.091 ms
+(9 rows)
+
+                                                                        QUERY PLAN                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..40.46 rows=20 width=41) (actual time=0.038..0.082 rows=20 loops=1)
+   Buffers: shared hit=23
+   ->  Index Scan using ix_bookings_user_id_created_at on bookings b  (cost=0.42..38252.58 rows=19108 width=41) (actual time=0.036..0.078 rows=20 loops=1)
+         Index Cond: (user_id = 1)
+         Buffers: shared hit=23
+ Planning Time: 0.153 ms
+ Execution Time: 0.110 ms
+(7 rows)
+
+
+--- Полный запрос endpoint-а с JOIN, ПОСЛЕ ---
+                                                                              QUERY PLAN                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.87..42.65 rows=20 width=185) (actual time=0.040..0.092 rows=20 loops=1)
+   Buffers: shared hit=28
+   ->  Nested Loop  (cost=0.87..39921.56 rows=19108 width=185) (actual time=0.039..0.089 rows=20 loops=1)
+         Buffers: shared hit=28
+         ->  Nested Loop  (cost=0.71..39407.45 rows=19108 width=138) (actual time=0.033..0.074 rows=20 loops=1)
+               Buffers: shared hit=26
+               ->  Index Scan using ix_bookings_user_id_created_at on bookings b  (cost=0.42..38252.58 rows=19108 width=49) (actual time=0.019..0.047 rows=20 loops=1)
+                     Index Cond: (user_id = 1)
+                     Buffers: shared hit=23
+               ->  Memoize  (cost=0.29..0.35 rows=1 width=93) (actual time=0.001..0.001 rows=1 loops=20)
+                     Cache Key: b.event_id
+                     Cache Mode: logical
+                     Hits: 19  Misses: 1  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                     Buffers: shared hit=3
+                     ->  Index Scan using ix_events_id on events e  (cost=0.28..0.34 rows=1 width=93) (actual time=0.007..0.007 rows=1 loops=1)
+                           Index Cond: (id = b.event_id)
+                           Buffers: shared hit=3
+         ->  Memoize  (cost=0.15..0.20 rows=1 width=55) (actual time=0.000..0.000 rows=1 loops=20)
+               Cache Key: e.venue_id
+               Cache Mode: logical
+               Hits: 19  Misses: 1  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+               Buffers: shared hit=2
+               ->  Index Scan using ix_venues_id on venues v  (cost=0.14..0.19 rows=1 width=55) (actual time=0.004..0.004 rows=1 loops=1)
+                     Index Cond: (id = e.venue_id)
+                     Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=165
+ Planning Time: 1.020 ms
+ Execution Time: 0.291 ms
+(29 rows)
+
+
+--- Убираем искусственные данные ---
+DELETE 20000
+VACUUM
+ bookings_total 
+----------------
+        1000000
+(1 row)
+
